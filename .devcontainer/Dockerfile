@@ -42,10 +42,6 @@ RUN ghcup install ghc 9.2.5 && \
 # Install libz3 (the library) and libz3-dev (the header files)
 RUN apt-get install libz3-4=4.8.12-3.1 libz3-dev=4.8.12-3.1 -y
 
-# i'll just close the gcl-parser project so you can immidiately play with it
-# After done playing, you may want to delete it and work on your own project
-RUN git clone https://github.com/wooshrow/gclparser.git
-
 # This should do it. To test if your haskell-z3 is working try this from the shell 
 # inside your container:
 #    docker run --rm -it <image-id>

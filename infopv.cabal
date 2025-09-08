@@ -12,7 +12,13 @@ build-type:          Simple
 extra-source-files:  README.md
 cabal-version:       >=1.10
 
-Library
+executable infopv
+  build-depends:       parser
+                     , base >= 4.10
+  main-is:             Main.hs
+  hs-source-dirs:      app
+
+library parser
   exposed-modules:     GCLParser.Parser
                      , GCLParser.GCLDatatype
                      , GCLParser.PrettyPrint
