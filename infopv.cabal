@@ -1,4 +1,4 @@
-name:                GCLparser
+name:                infopv
 version:             0.2.1
 -- synopsis:
 -- description:
@@ -38,7 +38,7 @@ library parser
                      , z3
   hs-source-dirs:      src
   -- location to z3 bin and lib:
-  extra-lib-dirs:      /usr/lib/aarch64-linux-gnu
+  extra-lib-dirs:      /usr/lib/x86_64-linux-gnu
   extra-include-dirs:  /usr/include
   build-tools:         happy, alex
   default-language:    Haskell2010
