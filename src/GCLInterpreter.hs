@@ -166,23 +166,23 @@ valueToInt e = error ("Expecting an integer value: " ++ show e)
 
 -- replaceing a varibale v (typically a bounded var) in an expression
 -- with a concrete integer i.
-instantiateVarWithInt :: String -> Int -> Expr -> Expr
+instantiateVarWithInt :: String -> Int -> Expr a -> Expr a
 instantiateVarWithInt vname i expr = case expr of
-   Var x    -> if x==vname then LitI i else expr
+   Var x _  -> if x==vname then LitI i else expr
    LitI _   ->  expr
    LitB _   ->  expr
-   LitNull  -> expr
+   -- LitNull  -> expr
    Parens e -> Parens (instantiateVarWithInt vname i e)
-   ArrayElem a e -> ArrayElem a (instantiateVarWithInt vname i e)
+   -- ArrayElem a e -> ArrayElem a (instantiateVarWithInt vname i e)
    OpNeg e    -> OpNeg (instantiateVarWithInt vname i e)
    BinopExpr op e1 e2 -> BinopExpr op (instantiateVarWithInt vname i e1) (instantiateVarWithInt vname i e2)
    Forall x e ->
       if x==vname then expr else Forall x (instantiateVarWithInt vname i e)
    Exists x e ->
       if (x==vname) then expr else Exists x (instantiateVarWithInt vname i e)
-   SizeOf e   -> SizeOf (instantiateVarWithInt vname i e)
-   NewStore e -> NewStore (instantiateVarWithInt vname i e)
-   Dereference p -> expr
+   -- SizeOf e   -> SizeOf (instantiateVarWithInt vname i e)
+   -- NewStore e -> NewStore (instantiateVarWithInt vname i e)
+   -- Dereference p -> expr
 
 -- ==========================================
 -- Eval and Exec functions
@@ -194,21 +194,21 @@ instantiateVarWithInt vname i expr = case expr of
 -- Else, if an exeception like division-by-0 is encountered, then
 -- Left msg is returned, where msg is a message describing the problem.
 --
-eval :: State -> Expr -> Either String Value
+eval :: State -> Expr a -> Either String Value
 eval state expr = case expr of
-  Var x  -> Right $ state <@> x
+  Var x _ -> Right $ state <@> x
   LitI i -> Right $ Int i
   LitB b -> Right $ Bool b
-  LitNull ->  Right $ null_
+--   LitNull ->  Right $ null_
   Parens e -> eval state  e
 
-  ArrayElem a i -> do
-    a_ <- eval state a
-    i_ <- valueToInt <$> eval state i
-    let Int n_ = arraySize a_
-    if 0<=i_ && i_ < n_
-       then return $ arrayRead a_ (Int i_)
-       else Left ("EXC2: illegal array index: " ++ show expr)
+--   ArrayElem a i -> do
+--     a_ <- eval state a
+--     i_ <- valueToInt <$> eval state i
+--     let Int n_ = arraySize a_
+--     if 0<=i_ && i_ < n_
+--        then return $ arrayRead a_ (Int i_)
+--        else Left ("EXC2: illegal array index: " ++ show expr)
 
   OpNeg e -> do
      e_ <- eval state e
@@ -247,29 +247,29 @@ eval state expr = case expr of
      let n = getLargestArraySize state
      values <- sequence [ eval state $ (instantiateVarWithInt x i body) | i <- [0..n-1]]
      return . Bool . or $ map valueToBool values
-  SizeOf a -> do
-     a_ <- eval state a
-     return $ case a_ of
-        ArrayBool a__ -> Int $ length a__
-        ArrayInt  a__ -> Int $ length a__
-        _             -> error ("Expecting an array: " ++ show a)
+--   SizeOf a -> do
+--      a_ <- eval state a
+--      return $ case a_ of
+--         ArrayBool a__ -> Int $ length a__
+--         ArrayInt  a__ -> Int $ length a__
+--         _             -> error ("Expecting an array: " ++ show a)
 
-  Dereference p ->
-     let
-     Pointer ref = state <@> p
-     value = state <@> ref
-     in Right value
+--   Dereference p ->
+--      let
+--      Pointer ref = state <@> p
+--      value = state <@> ref
+--      in Right value
   -- this will be handled at the assignment level, since it can only occur
   -- in the form of x := new(e)
-  NewStore _  -> undefined
+--   NewStore _  -> undefined
   -- these should not occur (only produced as intermediate expr during
   -- wlp calculation):
-  RepBy _ _ _ -> undefined
-  Cond _ _ _  -> undefined
+--   RepBy _ _ _ -> undefined
+--   Cond _ _ _  -> undefined
   --   Int x -> allocateNewObject
 
 -- lifted eval
-eval_ :: State -> Expr -> Either (String,State) Value
+eval_ :: State -> Expr a -> Either (String,State) Value
 eval_ state expr = case eval state expr of
    Right e -> Right e
    Left exception -> Left (exception,state)
@@ -295,7 +295,7 @@ s0__ = [
 -- Finally, an execution may fail to terminate, if the statement
 -- itself contains a non-terminating loop.
 --
-exec :: State -> Stmt -> Either (String,State) State
+exec :: State -> Stmt a -> Either (String,State) State
 exec state stmt = case stmt of
    Skip -> return state
    -- assume is ignored:
@@ -307,12 +307,12 @@ exec state stmt = case stmt of
           then return state
           else error ("Assertion violation: " ++ show stmt)
 
-   -- v := new(10)
-   Assign var (NewStore expr) -> do
-        i <- valueToInt <$> eval_ state expr
-        let (refToNewObj,state') = allocateNewObject i state
-        let state'' = update var (Pointer refToNewObj) state'
-        return state''
+   -- -- v := new(10)
+   -- Assign var (NewStore expr) -> do
+   --      i <- valueToInt <$> eval_ state expr
+   --      let (refToNewObj,state') = allocateNewObject i state
+   --      let state'' = update var (Pointer refToNewObj) state'
+   --      return state''
 
    -- ordinary assignment v := e
    Assign var expr -> do
@@ -320,22 +320,22 @@ exec state stmt = case stmt of
         let state' = update var value state
         return state'
 
-   DrefAssign var expr -> do
-        value <- eval_ state expr
-        let state' = update var value state
-        return state'
+   -- DrefAssign var expr -> do
+   --      value <- eval_ state expr
+   --      let state' = update var value state
+   --      return state'
 
-   AAssign  a index expr -> do
-        i <- valueToInt <$> eval_ state index
-        let array = state <@> a
-        let Int n = arraySize array
-        if 0<=i && i<n
-           then do
-                e <- eval_ state expr
-                let array' = arrayUpdate i e array
-                let state' = update a array' state
-                return state'
-           else Left ("EXC2: illegal array index: " ++ show stmt, state)
+   -- AAssign  a index expr -> do
+   --      i <- valueToInt <$> eval_ state index
+   --      let array = state <@> a
+   --      let Int n = arraySize array
+   --      if 0<=i && i<n
+   --         then do
+   --              e <- eval_ state expr
+   --              let array' = arrayUpdate i e array
+   --              let state' = update a array' state
+   --              return state'
+   --         else Left ("EXC2: illegal array index: " ++ show stmt, state)
 
    Seq stmt1 stmt2 -> do
        intermediateState <- exec state stmt1
@@ -351,23 +351,23 @@ exec state stmt = case stmt of
        if g then exec state (Seq body stmt)
             else return state
 
-   TryCatch exc body handler ->
-       let
-       -- add exc as a new loc-var
-       state1 = pushVar exc (Int 0) state
-       in
-       case exec state1 body of
-          Right state2 -> return $ popVar exc state2
-          Left (msg,state2) ->
-            let
-            state3 = case take 4 msg of
-                          "EXC1" -> update exc (Int 1) state2
-                          "EXC2" -> update exc (Int 2) state2
-                          _      -> update exc (Int 9) state2
-            in
-            case exec state3 handler of
-                Right state4      -> Right $ popVar exc state4
-                Left (msg,state4) -> Left (msg, popVar exc state4)
+   -- TryCatch exc body handler ->
+   --     let
+   --     -- add exc as a new loc-var
+   --     state1 = pushVar exc (Int 0) state
+   --     in
+   --     case exec state1 body of
+   --        Right state2 -> return $ popVar exc state2
+   --        Left (msg,state2) ->
+   --          let
+   --          state3 = case take 4 msg of
+   --                        "EXC1" -> update exc (Int 1) state2
+   --                        "EXC2" -> update exc (Int 2) state2
+   --                        _      -> update exc (Int 9) state2
+   --          in
+   --          case exec state3 handler of
+   --              Right state4      -> Right $ popVar exc state4
+   --              Left (msg,state4) -> Left (msg, popVar exc state4)
 
 
    Block vardecls body ->
@@ -407,7 +407,7 @@ exec state stmt = case stmt of
 -- are restored. The values of output variables are not restored,
 -- of course.
 --
-execProgram :: Program -> State -> Either (String,State) State
+execProgram :: Program a -> State -> Either (String,State) State
 execProgram (Program name inputvars outputvars stmt) state =
   let
   inputParamNames   = [ name | VarDeclaration name ty <- inputvars]

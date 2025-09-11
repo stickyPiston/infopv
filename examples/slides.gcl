@@ -1,0 +1,9 @@
+f(x:int, y:int | z:int) {
+    assume ~ (x = y) ;
+    var tmp:int {
+        tmp := x ;
+        x := y ;
+        y := tmp
+    } ;
+    assert ~ (x = y)
+}

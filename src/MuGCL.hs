@@ -84,21 +84,21 @@ data MutationType = NO_MUTATION |
 ($>) :: (x->c)->(a,x)->(a,c)
 f $> (a,x) = (a, f x)
 
-mutateExpr :: Expr -> [(MutationType,Expr)]
+mutateExpr :: Expr a -> [(MutationType, Expr a)]
 mutateExpr expr = filter (\m -> fst m /= NO_MUTATION) $ mutate expr
    where
    mutate expr = case expr of
-      Var v   -> [(NO_MUTATION, expr)]
+      Var v _ -> [(NO_MUTATION, expr)]
       LitI x  -> [(NO_MUTATION, expr)]
       LitB x  -> [(NO_MUTATION, expr)]
-      LitNull -> [(NO_MUTATION, expr)]
+      -- LitNull -> [(NO_MUTATION, expr)]
       Parens e ->  [ Parens $> e' | e' <- mutate e]
-      ArrayElem a i ->
-         let
-         group1 = map ((\a_ -> ArrayElem a_ i) $>) $ mutate a
-         group2 = map ((\i_ -> ArrayElem a i_) $>) $ mutate i
-         in
-         group1 ++ group2
+      -- ArrayElem a i ->
+      --    let
+      --    group1 = map ((\a_ -> ArrayElem a_ i) $>) $ mutate a
+      --    group2 = map ((\i_ -> ArrayElem a i_) $>) $ mutate i
+      --    in
+      --    group1 ++ group2
 
       OpNeg e -> (NOT_DROP, e) : map (OpNeg $>) (mutate e)
 
@@ -196,20 +196,20 @@ mutateExpr expr = filter (\m -> fst m /= NO_MUTATION) $ mutate expr
       Forall _ _ -> [(NO_MUTATION, expr)]
       Exists _ _ -> [(NO_MUTATION, expr)]
 
-      SizeOf a -> map (SizeOf $>) $ mutate a
+      -- SizeOf a -> map (SizeOf $>) $ mutate a
 
       --
       -- Not going to mutate RepBy and Cond as they should only
       -- appear as intermediate expressions during verification
       --
-      RepBy _ _ _ -> [(NO_MUTATION, expr)]
-      Cond  _ _ _ -> [(NO_MUTATION, expr)]
+      -- RepBy _ _ _ -> [(NO_MUTATION, expr)]
+      -- Cond  _ _ _ -> [(NO_MUTATION, expr)]
 
-      NewStore e -> map (NewStore $>) $ mutate e
+      -- NewStore e -> map (NewStore $>) $ mutate e
 
-      Dereference p -> [(NO_MUTATION, expr)]
+      -- Dereference p -> [(NO_MUTATION, expr)]
 
-mutateStmt :: Stmt -> [(MutationType,Stmt)]
+mutateStmt :: Stmt a -> [(MutationType, Stmt a)]
 mutateStmt stmt = filter (\m -> fst m /= NO_MUTATION) $ mutate stmt
   where
   mutate stmt = case stmt of
@@ -217,10 +217,10 @@ mutateStmt stmt = filter (\m -> fst m /= NO_MUTATION) $ mutate stmt
      Assert e -> [(NO_MUTATION, stmt)]
      Assume e -> [(NO_MUTATION, stmt)]
      Assign  x e    -> map (Assign x $>) $ mutateExpr e
-     DrefAssign x e -> map (DrefAssign x $>) $ mutateExpr e
-     AAssign x i e -> map ((\i_ -> AAssign x i_ e) $>) (mutateExpr i)
-                      ++
-                      map ((\e_ -> AAssign x i e_) $>) (mutateExpr e)
+    --  DrefAssign x e -> map (DrefAssign x $>) $ mutateExpr e
+    --  AAssign x i e -> map ((\i_ -> AAssign x i_ e) $>) (mutateExpr i)
+    --                   ++
+    --                   map ((\e_ -> AAssign x i e_) $>) (mutateExpr e)
 
      -- we will not drop parts of Seq as that might remove some Asserts
      Seq stmt1 stmt2 -> map ((\s1_ -> Seq s1_ stmt2) $>) (mutate stmt1)
@@ -244,16 +244,16 @@ mutateStmt stmt = filter (\m -> fst m /= NO_MUTATION) $ mutate stmt
 
      Block vars body -> map (Block vars $>) $ mutate body
 
-     TryCatch exc body handler ->
-        let
-        group1 = map ((\body_ -> TryCatch exc body_ handler) $>) $ mutate body
-        group2 = map ((\h_ -> TryCatch exc body h_) $>) $ mutate handler
-        m1 = (TRYCATCH_DROP_CATCH, body)
-        in
-        m1 : group1 ++ group2
+    --  TryCatch exc body handler ->
+    --     let
+    --     group1 = map ((\body_ -> TryCatch exc body_ handler) $>) $ mutate body
+    --     group2 = map ((\h_ -> TryCatch exc body h_) $>) $ mutate handler
+    --     m1 = (TRYCATCH_DROP_CATCH, body)
+    --     in
+    --     m1 : group1 ++ group2
 
 
-mutateProgram :: Program -> [(MutationType,Program)]
+mutateProgram :: Program a -> [(MutationType, Program a)]
 mutateProgram (Program name inputParams outputParams body)
    =
    map (Program name inputParams outputParams $>) $ mutateStmt body
