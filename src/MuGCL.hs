@@ -93,12 +93,12 @@ mutateExpr expr = filter (\m -> fst m /= NO_MUTATION) $ mutate expr
       LitB x  -> [(NO_MUTATION, expr)]
       -- LitNull -> [(NO_MUTATION, expr)]
       Parens e ->  [ Parens $> e' | e' <- mutate e]
-      -- ArrayElem a i ->
-      --    let
-      --    group1 = map ((\a_ -> ArrayElem a_ i) $>) $ mutate a
-      --    group2 = map ((\i_ -> ArrayElem a i_) $>) $ mutate i
-      --    in
-      --    group1 ++ group2
+      ArrayElem a i ->
+         let
+         group1 = map ((\a_ -> ArrayElem a_ i) $>) $ mutate a
+         group2 = map ((\i_ -> ArrayElem a i_) $>) $ mutate i
+         in
+         group1 ++ group2
 
       OpNeg e -> (NOT_DROP, e) : map (OpNeg $>) (mutate e)
 
@@ -196,14 +196,13 @@ mutateExpr expr = filter (\m -> fst m /= NO_MUTATION) $ mutate expr
       Forall _ _ -> [(NO_MUTATION, expr)]
       Exists _ _ -> [(NO_MUTATION, expr)]
 
-      -- SizeOf a -> map (SizeOf $>) $ mutate a
+      SizeOf a -> map (SizeOf $>) $ mutate a
 
       --
       -- Not going to mutate RepBy and Cond as they should only
       -- appear as intermediate expressions during verification
-      --
-      -- RepBy _ _ _ -> [(NO_MUTATION, expr)]
-      -- Cond  _ _ _ -> [(NO_MUTATION, expr)]
+      RepBy {} -> [(NO_MUTATION, expr)]
+      Cond  {} -> [(NO_MUTATION, expr)]
 
       -- NewStore e -> map (NewStore $>) $ mutate e
 
@@ -218,9 +217,9 @@ mutateStmt stmt = filter (\m -> fst m /= NO_MUTATION) $ mutate stmt
      Assume e -> [(NO_MUTATION, stmt)]
      Assign  x e    -> map (Assign x $>) $ mutateExpr e
     --  DrefAssign x e -> map (DrefAssign x $>) $ mutateExpr e
-    --  AAssign x i e -> map ((\i_ -> AAssign x i_ e) $>) (mutateExpr i)
-    --                   ++
-    --                   map ((\e_ -> AAssign x i e_) $>) (mutateExpr e)
+     AAssign x i e -> map ((\i_ -> AAssign x i_ e) $>) (mutateExpr i)
+                      ++
+                      map ((\e_ -> AAssign x i e_) $>) (mutateExpr e)
 
      -- we will not drop parts of Seq as that might remove some Asserts
      Seq stmt1 stmt2 -> map ((\s1_ -> Seq s1_ stmt2) $>) (mutate stmt1)

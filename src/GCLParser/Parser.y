@@ -136,7 +136,7 @@ PStatement  :: { Stmt () }
              | while PExpr do copen PStatements cclose                { While $2 $5 }
              | var PVarDeclarations copen PStatements cclose          { Block $2 $4 }
             --  | try copen PStatement cclose catch popen identifier pclose copen PStatement cclose { TryCatch $7 $3 $10 }
-            --  | identifier sopen PExpr sclose assign PExpr             { AAssign $1 $3 $6 }
+             | identifier sopen PExpr sclose assign PExpr             { AAssign $1 $3 $6 }
              | identifier assign PExpr                                { Assign $1 $3 }
             --  | identifier dot val assign PExpr                        { DrefAssign $1 $5 }
 --           | popen PIdentifiers pclose assign identifier popen PArguments pclose { Call $2 $7 $5 }
@@ -154,8 +154,8 @@ PExpr :: { Expr () }
        | minus intvalue                                 { LitI (-$2) }
        | boolvalue                                      { LitB $1 }
        | popen PExpr pclose                             { Parens $2 }
-    --    | identifier sopen PExpr sclose                  { ArrayElem (Var $1) $3 }
-    --    | sizeof identifier                              { SizeOf (Var $2) }
+       | identifier sopen PExpr sclose                  { ArrayElem (Var $1) $3 }
+       | sizeof identifier                              { SizeOf (Var $2) }
        | neg PExpr                                      { OpNeg $2 } 
        | PExpr and PExpr                                { opAnd $1 $3 }
        | PExpr or PExpr                                 { opOr $1 $3 }
@@ -190,10 +190,10 @@ rename new old (Parens e)                 = Parens (rename new old e)
 rename new old (OpNeg e)                  = OpNeg (rename new old e)
 rename new old (BinopExpr opr e1 e2)      = BinopExpr opr (rename new old e1) (rename new old e2)
 rename new old (Forall x e)               = Forall x (rename new old e)
--- rename new old (ArrayElem var e)          = ArrayElem var (rename new old e)
+rename new old (ArrayElem var e)          = ArrayElem var (rename new old e)
 rename _   _   (LitI x)                   = LitI x
 rename _   _   (LitB x)                   = LitB x
--- rename new old (SizeOf x)                 = SizeOf x
+rename new old (SizeOf x)                 = SizeOf x
 rename new old (Var x a)
     | x == old  = Var new a
     | otherwise = Var x a

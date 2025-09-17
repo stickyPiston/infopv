@@ -50,7 +50,7 @@ data Stmt ann
     | Assert     (Expr ann)             
     | Assume     (Expr ann)             
     | Assign     String           (Expr ann)   
-    -- | AAssign    String           Expr   Expr  
+    | AAssign    String           (Expr ann)   (Expr ann)
     -- | DrefAssign String           Expr
     | Seq        (Stmt ann)             (Stmt ann)   
     | IfThenElse (Expr ann)             (Stmt ann)   (Stmt ann)     
@@ -65,7 +65,7 @@ instance Show (Stmt ann) where
     show (Assume condition)       = "assume " ++ show condition
     show (Assign var e)           = var ++ " := " ++ show e 
     -- show (DrefAssign var e)       = var ++ ".val := " ++ show e 
-    -- show (AAssign var i e)        = var ++ "[" ++ show i ++ "]" ++ " := " ++ show e
+    show (AAssign var i e)        = var ++ "[" ++ show i ++ "]" ++ " := " ++ show e
     show (Seq s1 s2)              = show s1 ++ ";" ++ show s2 
     show (IfThenElse gaurd s1 s2) = "if " ++ show gaurd ++ " then " ++ show s1 ++ " else " ++ show s2
     show (While gaurd s)          = "while " ++ show gaurd ++ " do {" ++ show s ++ "}"
@@ -83,13 +83,13 @@ data Expr ann
     | LitB               Bool    
     -- | LitNull
     | Parens             (Expr ann)    
-    -- | ArrayElem          Expr   Expr   
+    | ArrayElem          (Expr ann)   (Expr ann)
     | OpNeg              (Expr ann)    
     | BinopExpr          BinOp  (Expr ann)   (Expr ann)
     | Forall             String (Expr ann) 
     | Exists             String (Expr ann) 
-    -- | SizeOf             Expr
-    -- | RepBy              Expr   Expr   Expr
+    | SizeOf             (Expr ann)
+    | RepBy              (Expr ann)   (Expr ann)   (Expr ann)
     | Cond               (Expr ann)   (Expr ann)   (Expr ann)
     -- | NewStore           Expr
     -- | Dereference        String
@@ -136,14 +136,14 @@ instance Show (Expr ann) where
     -- show LitNull                    = "null"
     -- show (Dereference u)            = u ++ ".val"
     show (Parens e)                 = "(" ++ show e ++ ")"
-    -- show (ArrayElem var index)      = show var ++ "[" ++ show index ++ "]"
+    show (ArrayElem var index)      = show var ++ "[" ++ show index ++ "]"
     show (OpNeg expr)               = "~" ++ show expr
     show (BinopExpr op e1 e2)       = "(" ++ show e1 ++ " " ++ show op ++ " " ++ show e2 ++ ")"
     -- show (NewStore e)               = "new(" ++ show e ++ ")"    
     show (Forall var p)             = "forall " ++ var ++ ":: " ++ show p
     show (Exists var p)             = "exists " ++ var ++ ":: " ++ show p
-    -- show (SizeOf var)               = "#" ++ show var
-    -- show (RepBy var i val)          = show var ++ "(" ++ show i ++ " repby " ++ show val ++ ")"
+    show (SizeOf var)               = "#" ++ show var
+    show (RepBy var i val)          = show var ++ "(" ++ show i ++ " repby " ++ show val ++ ")"
     show (Cond g e1 e2)             = "(" ++ show g ++ " -> " ++ show e1 ++ " | " ++ show e2 ++ ")"
     
 instance Show BinOp where
