@@ -2,6 +2,7 @@
 {-# HLINT ignore "Redundant <$>" #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE BlockArguments #-}
+{-# LANGUAGE TupleSections #-}
 
 module Main where
 
@@ -16,6 +17,7 @@ import ExamplesOfSemanticFunction
 import Data.Maybe
 import Control.Monad.Reader
 import Debug.Trace
+import Data.Functor
 
 main :: IO ()
 main = getArgs >>= \case
@@ -23,11 +25,13 @@ main = getArgs >>= \case
     [filepath] -> parseGCLfile filepath >>= \case
         Left err -> putStrLn $ "Could not parse " <> filepath <> ": " <> err
         Right Program { stmt, input, output } -> do
+            -- traceShowM stmt
             let initialGamma = [(name, ty) | VarDeclaration name ty <- input ++ output]
             let pre = runReader (wlp stmt (LitB True)) initialGamma
+            -- traceShowM pre
             solverRes <- evalZ3 do
                 assert =<< mkNot =<< fromExpr pre
-                traceM =<< solverToString
+                -- traceM =<< solverToString
                 check
             case solverRes of
                 Sat -> putStrLn "Program invalid"
@@ -36,6 +40,7 @@ main = getArgs >>= \case
 type Typed = Type
 type Untyped = ()
 type Predicate = Expr
+type SymbolEnv = [(String, Z3.Symbol)]
 
 type Gamma = [(String, Type)]
 
@@ -47,12 +52,18 @@ wlp stmt q = case stmt of
     Assign var e       -> do
         ae <- annotatePredicate e
         return $ (var |-> ae) q
+    AAssign var i e    -> do
+        traceShowM q
+        arr <- annotatePredicate (Var var ())
+        ai <- annotatePredicate i
+        ae <- annotatePredicate e
+        return $ (var |-> RepBy arr ai ae) q
     Seq s1 s2          -> wlp s1 =<< wlp s2 q
     IfThenElse g s1 s2 -> do
         l <- liftM2 opImplication (annotatePredicate g) (wlp s1 q)
         r <- liftM2 opImplication (OpNeg <$> annotatePredicate g) (wlp s2 q)
         return $ l `opAnd` r
-    While gaurd s      -> undefined
+    While guard s      -> undefined
     Block vars s       -> local ([(name, ty) | VarDeclaration name ty <- vars] ++) do
         base <- wlp s q
         return $ foldr Forall base [name | VarDeclaration name _ <- vars]
@@ -61,6 +72,7 @@ annotatePredicate :: Predicate Untyped -> Reader Gamma (Predicate Typed)
 annotatePredicate = \case
     Var name _ -> Var name <$> asks (fromJust . lookup name)
     Parens inner -> Parens <$> annotatePredicate inner
+    ArrayElem arr index -> ArrayElem <$> annotatePredicate arr <*> annotatePredicate index
     OpNeg rand -> OpNeg <$> annotatePredicate rand
     BinopExpr binop l r -> BinopExpr binop <$> annotatePredicate l <*> annotatePredicate r
     Forall name body -> Forall name <$> local ((name, PType PTInt) :) (annotatePredicate body)
@@ -71,6 +83,8 @@ annotatePredicate = \case
         (annotatePredicate else_)
     LitI n -> return $ LitI n
     LitB b -> return $ LitB b
+    RepBy arr i v -> RepBy <$> annotatePredicate arr <*> annotatePredicate i <*> annotatePredicate v
+    SizeOf arr -> SizeOf <$> annotatePredicate arr
 
 (|->) :: String -> Expr a -> Expr a -> Expr a
 (x |-> for) in_ = case in_ of
@@ -103,22 +117,29 @@ fromType = \case
 
 fromExpr :: Expr Type -> Z3 Z3.AST
 fromExpr e = do
-    env <- forM (freeVariables e) \ name -> do
-        z3var <- mkStringSymbol name
-        return (name, z3var)
+    env <- foldM buildEnv ([], []) (freeVariables e)
     go env e
     where
-        go :: [(String, Z3.Symbol)] -> Expr Type -> Z3 Z3.AST
-        go env = \case
+        buildEnv :: (SymbolEnv, SymbolEnv) -> (String, Type) -> Z3 (SymbolEnv, SymbolEnv)
+        buildEnv (varEnv, arrEnv) (name, ty) = do
+            left <- (name,) <$> mkStringSymbol name
+            (left : varEnv,) <$> case ty of
+                AType _ -> mkStringSymbol ('#':name) <&> (: arrEnv) . (name,)
+                _ -> return arrEnv
+        
+        -- Take tuple of (variable environment, array size environment) and an expression,
+        -- and produce the corresponding Z3 AST.
+        go :: (SymbolEnv, SymbolEnv) -> Expr Type -> Z3 Z3.AST
+        go env@(varEnv, arrEnv) = \case
             (Var var ty)             -> do
                 sort <- fromType ty
-                mkVar (fromJust $ lookup var env) sort
+                mkVar (fromJust $ lookup var varEnv) sort
             (LitI x)              -> mkInt x =<< mkIntSort
             (LitB b)           -> mkBool b
             -- LitNull               -> _
             -- (Dereference u)       -> _
             (Parens e)            -> go env e
-            -- (ArrayElem var index) -> _
+            (ArrayElem var index) -> join $ mkSelect <$> go env var <*> go env index
             (OpNeg expr)          -> mkNot =<< go env expr
             (BinopExpr op e1 e2)  -> do
                 lhs <- go env e1
@@ -140,18 +161,14 @@ fromExpr e = do
             -- (NewStore e)          -> _
             (Forall var b)        -> do
                 sym <- mkStringSymbol var
-                z3body <- go ((var, sym) : env) b
+                z3body <- go ((var, sym) : varEnv, arrEnv) b
                 sort <- mkIntSort
                 mkForall [] [sym] [sort] z3body
             (Exists var b)        -> do
                 sym <- mkStringSymbol var
-                z3body <- go ((var, sym) : env) b
+                z3body <- go ((var, sym) : varEnv, arrEnv) b
                 sort <- mkIntSort
                 mkExists [] [sym] [sort] z3body
-            -- (SizeOf var)          -> _
-            -- (RepBy var i val)     -> _
-            (Cond g e1 e2)        ->
-                join $ liftM3 mkIte
-                    (go env g)
-                    (go env e1)
-                    (go env e2)
+            (SizeOf (Var name t)) -> mkVar (fromJust $ lookup name arrEnv) =<< mkIntSort
+            (RepBy var i val)     -> join $ mkStore <$> go env var <*> go env i  <*> go env val
+            (Cond g e1 e2)        -> join $ mkIte   <$> go env g   <*> go env e1 <*> go env e2

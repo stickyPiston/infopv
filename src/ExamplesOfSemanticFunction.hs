@@ -25,8 +25,8 @@ collectAllVariables (Cond g e1 e2)  = collectAllVariables g ++ collectAllVariabl
 -- collectAllVariables (Dereference x) = [x]
 
 -- a function to collect all free variables in a given expression.
-freeVariables :: Expr a -> [String]
-freeVariables (Var x _)    = [x]
+freeVariables :: Expr a -> [(String, a)]
+freeVariables (Var x a)    = [(x, a)]
 freeVariables (LitI _)   = []
 freeVariables (LitB _)   = []
 -- freeVariables LitNull    = []
@@ -37,11 +37,11 @@ freeVariables (BinopExpr _ e1 e2) = freeVariables e1 ++ freeVariables e2
 
 freeVariables (Forall x e)    = filter not_x (freeVariables e)
     where
-    not_x y = y /= x
+    not_x (y, _) = y /= x
 
 freeVariables (Exists x e)    = filter not_x (freeVariables e)
     where
-    not_x y = y /= x
+    not_x (y, _) = y /= x
 
 freeVariables (SizeOf a)      = freeVariables a
 freeVariables (RepBy a e1 e2) = freeVariables a ++ freeVariables e1 ++ freeVariables e2
