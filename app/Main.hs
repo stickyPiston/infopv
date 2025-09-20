@@ -1,9 +1,3 @@
-{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
-{-# HLINT ignore "Redundant <$>" #-}
-{-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE BlockArguments #-}
-{-# LANGUAGE TupleSections #-}
-
 module Main where
 
 import GCLUtils
@@ -17,7 +11,6 @@ import ExamplesOfSemanticFunction
 import Data.Maybe
 import Control.Monad.Reader
 import Debug.Trace
-import Data.Functor
 
 main :: IO ()
 main = getArgs >>= \case
@@ -25,13 +18,11 @@ main = getArgs >>= \case
     [filepath] -> parseGCLfile filepath >>= \case
         Left err -> putStrLn $ "Could not parse " <> filepath <> ": " <> err
         Right Program { stmt, input, output } -> do
-            -- traceShowM stmt
             let initialGamma = [(name, ty) | VarDeclaration name ty <- input ++ output]
             let pre = runReader (wlp stmt (LitB True)) initialGamma
-            -- traceShowM pre
             solverRes <- evalZ3 do
                 assert =<< mkNot =<< fromExpr pre
-                -- traceM =<< solverToString
+                traceM =<< solverToString
                 check
             case solverRes of
                 Sat -> putStrLn "Program invalid"
@@ -53,11 +44,11 @@ wlp stmt q = case stmt of
         ae <- annotatePredicate e
         return $ (var |-> ae) q
     AAssign var i e    -> do
-        traceShowM q
-        arr <- annotatePredicate (Var var ())
-        ai <- annotatePredicate i
-        ae <- annotatePredicate e
-        return $ (var |-> RepBy arr ai ae) q
+        repby <- liftM3 RepBy
+            (annotatePredicate (Var var ()))
+            (annotatePredicate i)
+            (annotatePredicate e)
+        return $ (var |-> repby) q
     Seq s1 s2          -> wlp s1 =<< wlp s2 q
     IfThenElse g s1 s2 -> do
         l <- liftM2 opImplication (annotatePredicate g) (wlp s1 q)
@@ -65,12 +56,13 @@ wlp stmt q = case stmt of
         return $ l `opAnd` r
     While guard s      -> undefined
     Block vars s       -> local ([(name, ty) | VarDeclaration name ty <- vars] ++) do
-        base <- wlp s q
-        return $ foldr Forall base [name | VarDeclaration name _ <- vars]
+        -- base <- wlp s q
+        -- return $ foldr Forall base [name | VarDeclaration name _ <- vars]
+        wlp s q
 
 annotatePredicate :: Predicate Untyped -> Reader Gamma (Predicate Typed)
 annotatePredicate = \case
-    Var name _ -> Var name <$> asks (fromJust . lookup name)
+    Var name _ -> asks (Var name . fromJust . lookup name)
     Parens inner -> Parens <$> annotatePredicate inner
     ArrayElem arr index -> ArrayElem <$> annotatePredicate arr <*> annotatePredicate index
     OpNeg rand -> OpNeg <$> annotatePredicate rand
@@ -106,6 +98,14 @@ annotatePredicate = \case
         ((x |-> for) cond)
         ((x |-> for) then_)
         ((x |-> for) else_)
+    SizeOf a -> SizeOf $ (x |-> for) a
+    RepBy a i v -> RepBy
+        ((x |-> for) a)
+        ((x |-> for) i)
+        ((x |-> for) v)
+    ArrayElem a i -> ArrayElem
+        ((x |-> for) a)
+        ((x |-> for) i)
     _ -> in_
 
 fromType :: Type -> Z3 Z3.Sort
@@ -124,7 +124,7 @@ fromExpr e = do
         buildEnv (varEnv, arrEnv) (name, ty) = do
             left <- (name,) <$> mkStringSymbol name
             (left : varEnv,) <$> case ty of
-                AType _ -> mkStringSymbol ('#':name) <&> (: arrEnv) . (name,)
+                AType _ -> (: arrEnv) . (name,) <$> mkStringSymbol ('#' : name)
                 _ -> return arrEnv
         
         -- Take tuple of (variable environment, array size environment) and an expression,

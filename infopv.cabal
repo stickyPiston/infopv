@@ -24,6 +24,9 @@ executable infopv
   main-is:             Main.hs
   hs-source-dirs:      app
   default-extensions:  LambdaCase
+                     , NamedFieldPuns
+                     , BlockArguments
+                     , TupleSections
 
 library parser
   exposed-modules:     GCLParser.Parser
