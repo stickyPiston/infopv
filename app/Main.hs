@@ -1,3 +1,5 @@
+{-# LANGUAGE PatternSynonyms #-}
+
 module Main where
 
 import GCLUtils
@@ -11,6 +13,7 @@ import ExamplesOfSemanticFunction
 import Data.Maybe
 import Control.Monad.Reader
 import Debug.Trace
+import Data.Foldable
 
 main :: IO ()
 main = getArgs >>= \case
@@ -35,7 +38,45 @@ type SymbolEnv = [(String, Z3.Symbol)]
 
 type Gamma = [(String, Type)]
 
-wlp :: Stmt Untyped -> Predicate Typed -> Reader Gamma (Predicate Typed)
+data Tree ann
+    = Empty
+    | Next (Stmt ann) (Tree ann)
+    | Decl VarDeclaration (Tree ann)
+    | Branch (Expr ann) (Tree ann) (Tree ann)
+
+pattern End :: Stmt a -> Tree a
+pattern End s = Next s Empty
+
+instance Semigroup (Tree ann) where
+    t <> Empty = t
+    Empty <> t = t
+    Next s1 t1 <> t2 = Next s1 (t1 <> t2)
+    Decl decl t1 <> t2 = Decl decl (t1 <> t2)
+    Branch g t1 t2 <> t3 = Branch g (t1 <> t3) (t2 <> t3)
+
+instance Monoid (Tree ann) where
+    mempty = Empty
+
+buildTree :: Int -> Stmt Untyped -> Reader Gamma (Tree Typed)
+buildTree k = go k
+    where
+        go :: Int -> Stmt Untyped -> Reader Gamma (Tree Typed)
+        go n = \case
+            Seq s1 s2 -> buildTree k s1 <> buildTree k s2
+            IfThenElse g t e -> Branch <$> annotatePredicate g <*> buildTree k t <*> buildTree k e
+            While g b -> unroll k g b
+            Block vars b -> local ([(x, t) | VarDeclaration x t <- vars] ++) $ buildTree k b
+            Skip -> return $ End Skip
+            Assert p -> End . Assert <$> annotatePredicate p
+            Assume p -> End . Assume <$> annotatePredicate p
+            Assign x e -> End . Assign x <$> annotatePredicate e
+            AAssign x i e -> (End .) . AAssign x <$> annotatePredicate i <*> annotatePredicate e
+    
+        unroll :: Int -> Expr Untyped -> Stmt Untyped -> Reader Gamma (Tree Typed)
+        unroll 0 _ b = go k b
+        unroll n g b = go (n - 1) (IfThenElse g (While g b) Skip)
+
+wlp :: Tree Typed -> Predicate Typed -> Predicate Typed
 wlp stmt q = case stmt of
     Skip               -> return q
     Assert p           -> (`opAnd` q) <$> annotatePredicate p
@@ -49,16 +90,16 @@ wlp stmt q = case stmt of
             (annotatePredicate i)
             (annotatePredicate e)
         return $ (var |-> repby) q
-    Seq s1 s2          -> wlp s1 =<< wlp s2 q
-    IfThenElse g s1 s2 -> do
-        l <- liftM2 opImplication (annotatePredicate g) (wlp s1 q)
-        r <- liftM2 opImplication (OpNeg <$> annotatePredicate g) (wlp s2 q)
-        return $ l `opAnd` r
-    While guard s      -> undefined
-    Block vars s       -> local ([(name, ty) | VarDeclaration name ty <- vars] ++) do
-        -- base <- wlp s q
-        -- return $ foldr Forall base [name | VarDeclaration name _ <- vars]
-        wlp s q
+    -- Seq s1 s2          -> wlp s1 =<< wlp s2 q
+    -- IfThenElse g s1 s2 -> do
+    --     l <- liftM2 opImplication (annotatePredicate g) (wlp s1 q)
+    --     r <- liftM2 opImplication (OpNeg <$> annotatePredicate g) (wlp s2 q)
+    --     return $ l `opAnd` r
+    -- While guard s      -> undefined
+    -- Block vars s       -> local ([(name, ty) | VarDeclaration name ty <- vars] ++) do
+    --     -- base <- wlp s q
+    --     -- return $ foldr Forall base [name | VarDeclaration name _ <- vars]
+    --     wlp s q
 
 annotatePredicate :: Predicate Untyped -> Reader Gamma (Predicate Typed)
 annotatePredicate = \case
