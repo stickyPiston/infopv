@@ -1,5 +1,3 @@
-{-# LANGUAGE PatternSynonyms #-}
-
 module Main where
 
 import GCLUtils
@@ -13,23 +11,22 @@ import ExamplesOfSemanticFunction
 import Data.Maybe
 import Control.Monad.Reader
 import Debug.Trace
-import Data.Foldable
 
 main :: IO ()
 main = getArgs >>= \case
     [] -> return ()
     [filepath] -> parseGCLfile filepath >>= \case
         Left err -> putStrLn $ "Could not parse " <> filepath <> ": " <> err
-        Right Program { stmt, input, output } -> do
+        Right Program { stmt, input, output } ->
             let initialGamma = [(name, ty) | VarDeclaration name ty <- input ++ output]
-            let pre = runReader (wlp stmt (LitB True)) initialGamma
-            solverRes <- evalZ3 do
-                assert =<< mkNot =<< fromExpr pre
+                compTree = runReader (buildTree 10 stmt) initialGamma
+                pres = wlpTree compTree (LitB True)
+             in evalZ3 do
+                forM pres fromExpr >>= mkAnd >>= mkNot >>= assert
                 traceM =<< solverToString
-                check
-            case solverRes of
-                Sat -> putStrLn "Program invalid"
-                Unsat -> putStrLn "Program valid"
+                check >>= \case
+                    Sat -> liftIO $ putStrLn "Program invalid"
+                    Unsat -> liftIO $ putStrLn "Program valid"
 
 type Typed = Type
 type Untyped = ()
@@ -41,8 +38,8 @@ type Gamma = [(String, Type)]
 data Tree ann
     = Empty
     | Next (Stmt ann) (Tree ann)
-    | Decl VarDeclaration (Tree ann)
     | Branch (Expr ann) (Tree ann) (Tree ann)
+    deriving (Show)
 
 pattern End :: Stmt a -> Tree a
 pattern End s = Next s Empty
@@ -51,55 +48,46 @@ instance Semigroup (Tree ann) where
     t <> Empty = t
     Empty <> t = t
     Next s1 t1 <> t2 = Next s1 (t1 <> t2)
-    Decl decl t1 <> t2 = Decl decl (t1 <> t2)
     Branch g t1 t2 <> t3 = Branch g (t1 <> t3) (t2 <> t3)
 
 instance Monoid (Tree ann) where
     mempty = Empty
 
 buildTree :: Int -> Stmt Untyped -> Reader Gamma (Tree Typed)
-buildTree k = go k
+buildTree k = go
     where
-        go :: Int -> Stmt Untyped -> Reader Gamma (Tree Typed)
-        go n = \case
-            Seq s1 s2 -> buildTree k s1 <> buildTree k s2
-            IfThenElse g t e -> Branch <$> annotatePredicate g <*> buildTree k t <*> buildTree k e
-            While g b -> unroll k g b
-            Block vars b -> local ([(x, t) | VarDeclaration x t <- vars] ++) $ buildTree k b
+        go :: Stmt Untyped -> Reader Gamma (Tree Typed)
+        go = \case
+            Seq s1 s2 -> liftM2 (<>) (go s1) (go s2)
+            IfThenElse g t e -> Branch <$> annotatePredicate g <*> go t <*> go e
+            While g b -> go $ unroll k g b
+            Block vars b -> local ([(x, t) | VarDeclaration x t <- vars] ++) $ go b
             Skip -> return $ End Skip
             Assert p -> End . Assert <$> annotatePredicate p
             Assume p -> End . Assume <$> annotatePredicate p
             Assign x e -> End . Assign x <$> annotatePredicate e
-            AAssign x i e -> (End .) . AAssign x <$> annotatePredicate i <*> annotatePredicate e
+            AAssign x () i e -> do
+                arrayTy <- asks $ fromJust . lookup x
+                stmt <- AAssign x arrayTy <$> annotatePredicate i <*> annotatePredicate e
+                return $ End stmt
     
-        unroll :: Int -> Expr Untyped -> Stmt Untyped -> Reader Gamma (Tree Typed)
-        unroll 0 _ b = go k b
-        unroll n g b = go (n - 1) (IfThenElse g (While g b) Skip)
+        unroll :: Int -> Expr Untyped -> Stmt Untyped -> Stmt Untyped
+        unroll 0 g b = Assume $ OpNeg g
+        unroll n g b = IfThenElse g (b `Seq` unroll (n - 1) g b) Skip
 
-wlp :: Tree Typed -> Predicate Typed -> Predicate Typed
+wlpTree :: Tree Typed -> Predicate Typed -> [Predicate Typed]
+wlpTree Empty q = [q]
+wlpTree (Next stmt child) q = map (wlp stmt) (wlpTree child q)
+wlpTree (Branch g l r) q = map (g `opImplication`) (wlpTree l q) <> map (OpNeg g `opImplication`) (wlpTree r q)
+
+wlp :: Stmt Typed -> Predicate Typed -> Predicate Typed
 wlp stmt q = case stmt of
-    Skip               -> return q
-    Assert p           -> (`opAnd` q) <$> annotatePredicate p
-    Assume p           -> (`opImplication` q) <$> annotatePredicate p
-    Assign var e       -> do
-        ae <- annotatePredicate e
-        return $ (var |-> ae) q
-    AAssign var i e    -> do
-        repby <- liftM3 RepBy
-            (annotatePredicate (Var var ()))
-            (annotatePredicate i)
-            (annotatePredicate e)
-        return $ (var |-> repby) q
-    -- Seq s1 s2          -> wlp s1 =<< wlp s2 q
-    -- IfThenElse g s1 s2 -> do
-    --     l <- liftM2 opImplication (annotatePredicate g) (wlp s1 q)
-    --     r <- liftM2 opImplication (OpNeg <$> annotatePredicate g) (wlp s2 q)
-    --     return $ l `opAnd` r
-    -- While guard s      -> undefined
-    -- Block vars s       -> local ([(name, ty) | VarDeclaration name ty <- vars] ++) do
-    --     -- base <- wlp s q
-    --     -- return $ foldr Forall base [name | VarDeclaration name _ <- vars]
-    --     wlp s q
+    Skip               -> q
+    Assert p           -> p `opAnd` q
+    Assume p           -> p `opImplication` q
+    Assign var e       -> (var |-> e) q
+    AAssign var a i e  -> (var |-> RepBy (Var var a) i e) q
+    _ -> error "wlp should only be called on statements from the computation paths"
 
 annotatePredicate :: Predicate Untyped -> Reader Gamma (Predicate Typed)
 annotatePredicate = \case

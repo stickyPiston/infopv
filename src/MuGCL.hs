@@ -217,9 +217,9 @@ mutateStmt stmt = filter (\m -> fst m /= NO_MUTATION) $ mutate stmt
      Assume e -> [(NO_MUTATION, stmt)]
      Assign  x e    -> map (Assign x $>) $ mutateExpr e
     --  DrefAssign x e -> map (DrefAssign x $>) $ mutateExpr e
-     AAssign x i e -> map ((\i_ -> AAssign x i_ e) $>) (mutateExpr i)
+     AAssign x a i e -> map ((\i_ -> AAssign x a i_ e) $>) (mutateExpr i)
                       ++
-                      map ((\e_ -> AAssign x i e_) $>) (mutateExpr e)
+                      map ((\e_ -> AAssign x a i e_) $>) (mutateExpr e)
 
      -- we will not drop parts of Seq as that might remove some Asserts
      Seq stmt1 stmt2 -> map ((\s1_ -> Seq s1_ stmt2) $>) (mutate stmt1)

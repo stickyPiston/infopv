@@ -27,6 +27,7 @@ executable infopv
                      , NamedFieldPuns
                      , BlockArguments
                      , TupleSections
+                     , PatternSynonyms
 
 library parser
   exposed-modules:     GCLParser.Parser

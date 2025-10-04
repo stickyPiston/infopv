@@ -50,7 +50,7 @@ data Stmt ann
     | Assert     (Expr ann)             
     | Assume     (Expr ann)             
     | Assign     String           (Expr ann)   
-    | AAssign    String           (Expr ann)   (Expr ann)
+    | AAssign    String ann       (Expr ann)   (Expr ann)
     -- | DrefAssign String           Expr
     | Seq        (Stmt ann)             (Stmt ann)   
     | IfThenElse (Expr ann)             (Stmt ann)   (Stmt ann)     
@@ -65,7 +65,7 @@ instance Show (Stmt ann) where
     show (Assume condition)       = "assume " ++ show condition
     show (Assign var e)           = var ++ " := " ++ show e 
     -- show (DrefAssign var e)       = var ++ ".val := " ++ show e 
-    show (AAssign var i e)        = var ++ "[" ++ show i ++ "]" ++ " := " ++ show e
+    show (AAssign var _ i e)        = var ++ "[" ++ show i ++ "]" ++ " := " ++ show e
     show (Seq s1 s2)              = show s1 ++ ";" ++ show s2 
     show (IfThenElse gaurd s1 s2) = "if " ++ show gaurd ++ " then " ++ show s1 ++ " else " ++ show s2
     show (While gaurd s)          = "while " ++ show gaurd ++ " do {" ++ show s ++ "}"

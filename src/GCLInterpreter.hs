@@ -325,7 +325,7 @@ exec state stmt = case stmt of
    --      let state' = update var value state
    --      return state'
 
-   AAssign  a index expr -> do
+   AAssign  a _ index expr -> do
         i <- valueToInt <$> eval_ state index
         let array = state <@> a
         let Int n = arraySize array
