@@ -18,10 +18,12 @@ executable infopv
                      , z3
                      , transformers
                      , mtl
+                     , optparse-applicative
   -- location to z3 bin and lib:
   extra-lib-dirs:      /usr/lib/aarch64-linux-gnu
   extra-include-dirs:  /usr/include
   main-is:             Main.hs
+  other-modules:       Checker
   hs-source-dirs:      app
   default-extensions:  LambdaCase
                      , NamedFieldPuns
