@@ -1,4 +1,4 @@
-module Checker (buildTree, wlpTree, fromExpr) where
+module Checker (buildTree, wlpTree, fromExpr, prune) where
 
 import GCLUtils
 import GCLParser.PrettyPrint
@@ -11,6 +11,8 @@ import ExamplesOfSemanticFunction
 import Data.Maybe
 import Control.Monad.Reader
 import Debug.Trace
+
+import qualified Data.Map as M
 
 type Typed = Type
 type Untyped = ()
@@ -57,12 +59,56 @@ buildTree k = go
     
         unroll :: Int -> Expr Untyped -> Stmt Untyped -> Stmt Untyped
         unroll 0 g b = Assume $ OpNeg g
+        -- TODO: Make sure variables in blocks get unique names
         unroll n g b = IfThenElse g (b `Seq` unroll (n - 1) g b) Skip
 
-wlpTree :: Tree Typed -> Predicate Typed -> [Predicate Typed]
-wlpTree Empty q = [q]
-wlpTree (Next stmt child) q = map (wlp stmt) (wlpTree child q)
-wlpTree (Branch g l r) q = map (g `opImplication`) (wlpTree l q) <> map (OpNeg g `opImplication`) (wlpTree r q)
+-- | The prune tree function prunes a subtree when all of its paths are unfeasable:
+--   * A @Next (Assume p) subtree@ or @Next (Assert p) subtree@ is pruned when @p@ contradicts the assumptions;
+--   * In @Branch g l r@, @l@ is pruned when @g@ contradicts the assumptions, and @r@ is pruned when @~g@
+--     contradicts the assumptions.
+prune :: [Expr Typed] -> Tree Typed -> ReaderT (M.Map String (Expr Typed)) IO (Tree Typed)
+prune assumps = \case
+    Empty -> return Empty
+    Next (Assume p) t -> do
+        evaluatedCondition <- applyStateSubst p
+        Next (Assume p) <$> prune (evaluatedCondition : assumps) t
+    Next (Assert p) t -> do
+        evaluatedCondition <- applyStateSubst p
+        Next (Assert p) <$> prune (evaluatedCondition : assumps) t
+    Next (Assign nm val) t -> do
+        val' <- applyStateSubst val
+        Next (Assign nm val) <$> local (M.insert nm val') (prune assumps t)
+    Next (AAssign nm ann idx val) t -> do
+        originalArray <- asks (M.! nm)
+        idx' <- applyStateSubst idx
+        val' <- applyStateSubst val
+        prunedSubtree <- local (M.insert nm (RepBy originalArray idx' val')) $ prune assumps t
+        return $ Next (AAssign nm ann idx val) prunedSubtree
+    Next Skip t -> Next Skip <$> prune assumps t
+    Branch g l r -> do
+        evaluatedGuard <- applyStateSubst g
+        (,) <$> checkFeasibility evaluatedGuard <*> checkFeasibility (OpNeg evaluatedGuard) >>= \case
+            (True, False)  -> Next (Assume g) <$> prune (g : assumps) l
+            (False, True)  -> Next (Assume (OpNeg g)) <$> prune (OpNeg g : assumps) r
+            (False, False) -> return Empty
+            (True, True)   -> Branch g <$> prune (g : assumps) l <*> prune (OpNeg g : assumps) r
+    where
+        checkFeasibility :: Expr Typed -> ReaderT (M.Map String (Expr Typed)) IO Bool
+        checkFeasibility p = liftIO $ evalZ3 do
+            mapM fromExpr (p : assumps) >>= mkAnd >>= assert
+            (== Sat) <$> check
+
+        substStateVar :: String -> Expr Typed -> ReaderT (M.Map String (Expr Typed)) IO (Expr Typed)
+        substStateVar fv e = asks \state -> (fv |-> state M.! fv) e
+
+        applyStateSubst :: Expr Typed -> ReaderT (M.Map String (Expr Typed)) IO (Expr Typed)
+        applyStateSubst e = foldM (flip substStateVar) e [fv | (fv, _) <- freeVariables e]
+
+wlpTree :: Predicate Typed -> Tree Typed -> [Predicate Typed]
+wlpTree q = \case
+    Empty -> [q]
+    Next stmt t -> map (wlp stmt) (wlpTree q t)
+    Branch g l r -> map (g `opImplication`) (wlpTree q l) <> map (OpNeg g `opImplication`) (wlpTree q r)
 
 wlp :: Stmt Typed -> Predicate Typed -> Predicate Typed
 wlp stmt q = case stmt of
@@ -91,6 +137,7 @@ annotatePredicate = \case
     RepBy arr i v -> RepBy <$> annotatePredicate arr <*> annotatePredicate i <*> annotatePredicate v
     SizeOf arr -> SizeOf <$> annotatePredicate arr
 
+infixl 3 |->
 (|->) :: String -> Expr a -> Expr a -> Expr a
 (x |-> for) in_ = case in_ of
     Var name _

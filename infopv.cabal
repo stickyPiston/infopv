@@ -19,6 +19,7 @@ executable infopv
                      , transformers
                      , mtl
                      , optparse-applicative
+                     , containers
   -- location to z3 bin and lib:
   extra-lib-dirs:      /usr/lib/aarch64-linux-gnu
   extra-include-dirs:  /usr/include

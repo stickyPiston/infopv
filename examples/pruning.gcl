@@ -1,0 +1,11 @@
+test(i : int | j : int) {
+    if i < 10 then {
+        if i > 10 then {
+            j := 20
+        } else {
+            j := 10
+        }
+    } else {
+        j := 10
+    }
+}

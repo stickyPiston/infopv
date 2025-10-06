@@ -9,6 +9,7 @@ import Control.Monad
 import Control.Monad.Reader
 import Options.Applicative
 import Debug.Trace
+import qualified Data.Map as M
 
 import Checker
 
@@ -35,11 +36,12 @@ main = do
     Config { k, filepath } <- execParser configParser
     parseGCLfile filepath >>= \case
         Left err -> putStrLn $ "Could not parse " <> filepath <> ": " <> err
-        Right Program { stmt, input, output } ->
+        Right Program { stmt, input, output } -> do
             let initialGamma = [(name, ty) | VarDeclaration name ty <- input ++ output]
-                compTree = runReader (buildTree k stmt) initialGamma
-                pres = wlpTree compTree (LitB True)
-             in evalZ3 do
+            let compTree = runReader (buildTree k stmt) initialGamma
+            prunedCompTree <- runReaderT (prune [] compTree) (M.fromList [(name, Var name ty) | VarDeclaration name ty <- input ++ output])
+            let pres = wlpTree (LitB True) prunedCompTree
+            evalZ3 do
                 forM pres fromExpr >>= mkAnd >>= mkNot >>= assert
                 traceM =<< solverToString
                 check >>= \case
