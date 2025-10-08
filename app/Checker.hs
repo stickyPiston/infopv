@@ -18,6 +18,7 @@ type Typed = Type
 type Untyped = ()
 type Predicate = Expr
 type SymbolEnv = [(String, Z3.Symbol)]
+type SymbolicState = M.Map String (Expr Typed)
 
 type Gamma = [(String, Type)]
 
@@ -66,15 +67,12 @@ buildTree k = go
 --   * A @Next (Assume p) subtree@ or @Next (Assert p) subtree@ is pruned when @p@ contradicts the assumptions;
 --   * In @Branch g l r@, @l@ is pruned when @g@ contradicts the assumptions, and @r@ is pruned when @~g@
 --     contradicts the assumptions.
-prune :: [Expr Typed] -> Tree Typed -> ReaderT (M.Map String (Expr Typed)) IO (Tree Typed)
+prune :: [Expr Typed] -> Tree Typed -> ReaderT SymbolicState IO (Tree Typed)
 prune assumps = \case
     Empty -> return Empty
     Next (Assume p) t -> do
         evaluatedCondition <- applyStateSubst p
         Next (Assume p) <$> prune (evaluatedCondition : assumps) t
-    Next (Assert p) t -> do
-        evaluatedCondition <- applyStateSubst p
-        Next (Assert p) <$> prune (evaluatedCondition : assumps) t
     Next (Assign nm val) t -> do
         val' <- applyStateSubst val
         Next (Assign nm val) <$> local (M.insert nm val') (prune assumps t)
@@ -84,7 +82,8 @@ prune assumps = \case
         val' <- applyStateSubst val
         prunedSubtree <- local (M.insert nm (RepBy originalArray idx' val')) $ prune assumps t
         return $ Next (AAssign nm ann idx val) prunedSubtree
-    Next Skip t -> Next Skip <$> prune assumps t
+    Next stmt t -> do
+        Next stmt <$> prune assumps t
     Branch g l r -> do
         evaluatedGuard <- applyStateSubst g
         (,) <$> checkFeasibility evaluatedGuard <*> checkFeasibility (OpNeg evaluatedGuard) >>= \case
@@ -93,15 +92,15 @@ prune assumps = \case
             (False, False) -> return Empty
             (True, True)   -> Branch g <$> prune (g : assumps) l <*> prune (OpNeg g : assumps) r
     where
-        checkFeasibility :: Expr Typed -> ReaderT (M.Map String (Expr Typed)) IO Bool
+        checkFeasibility :: Expr Typed -> ReaderT SymbolicState IO Bool
         checkFeasibility p = liftIO $ evalZ3 do
             mapM fromExpr (p : assumps) >>= mkAnd >>= assert
             (== Sat) <$> check
 
-        substStateVar :: String -> Expr Typed -> ReaderT (M.Map String (Expr Typed)) IO (Expr Typed)
+        substStateVar :: String -> Expr Typed -> ReaderT SymbolicState IO (Expr Typed)
         substStateVar fv e = asks \state -> (fv |-> state M.! fv) e
 
-        applyStateSubst :: Expr Typed -> ReaderT (M.Map String (Expr Typed)) IO (Expr Typed)
+        applyStateSubst :: Expr Typed -> ReaderT SymbolicState IO (Expr Typed)
         applyStateSubst e = foldM (flip substStateVar) e [fv | (fv, _) <- freeVariables e]
 
 wlpTree :: Predicate Typed -> Tree Typed -> [Predicate Typed]
