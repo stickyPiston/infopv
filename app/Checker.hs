@@ -1,4 +1,4 @@
-module Checker (buildTree, wlpTree, fromExpr, prune) where
+module Checker (buildTree, wlpTree, fromExpr, prune, runPrune) where
 
 import GCLUtils
 import GCLParser.PrettyPrint
@@ -10,6 +10,7 @@ import Control.Monad
 import ExamplesOfSemanticFunction
 import Data.Maybe
 import Control.Monad.Reader
+import Control.Monad.Writer
 import Debug.Trace
 
 import qualified Data.Map as M
@@ -17,6 +18,17 @@ import qualified Data.Map as M
 type Typed = Type
 type Untyped = ()
 type Predicate = Expr
+
+data Stats = Stats
+    { prunedPaths :: Int
+    , inspectedPaths :: Int
+    } deriving (Show)
+
+instance Semigroup Stats where
+    Stats p1 i1 <> Stats p2 i2 = Stats (p1 + p2) (i1 + i2)
+
+instance Monoid Stats where
+    mempty = Stats 0 0
 
 -- Environment for tree building
 type Gamma = [(String, Type)]
@@ -27,28 +39,28 @@ type SymbolicState = M.Map String (Expr Typed)
 -- Environment for Expr to Z3 AST conversion
 type SymbolEnv = [(String, Z3.Symbol)]
 
-data Tree ann
+data Tree
     = Empty
-    | Next (Stmt ann) (Tree ann)
-    | Branch (Expr ann) (Tree ann) (Tree ann)
+    | Next (Stmt Typed) Tree
+    | Branch (Expr Typed) Tree Tree
     deriving (Show)
 
-pattern End :: Stmt a -> Tree a
+pattern End :: Stmt Typed -> Tree
 pattern End s = Next s Empty
 
-instance Semigroup (Tree ann) where
+instance Semigroup Tree where
     t <> Empty = t
     Empty <> t = t
     Next s1 t1 <> t2 = Next s1 (t1 <> t2)
     Branch g t1 t2 <> t3 = Branch g (t1 <> t3) (t2 <> t3)
 
-instance Monoid (Tree ann) where
+instance Monoid Tree where
     mempty = Empty
 
-buildTree :: Int -> Stmt Untyped -> Reader Gamma (Tree Typed)
+buildTree :: Int -> Stmt Untyped -> Reader Gamma Tree
 buildTree k = go
     where
-        go :: Stmt Untyped -> Reader Gamma (Tree Typed)
+        go :: Stmt Untyped -> Reader Gamma Tree
         go = \case
             Seq s1 s2 -> liftM2 (<>) (go s1) (go s2)
             IfThenElse g t e -> Branch <$> annotatePredicate g <*> go t <*> go e
@@ -68,13 +80,16 @@ buildTree k = go
         -- TODO: Make sure variables in blocks get unique names
         unroll n g b = IfThenElse g (b `Seq` unroll (n - 1) g b) Skip
 
-type Prune = ReaderT SymbolicState IO
+type Prune = WriterT Stats (ReaderT SymbolicState IO)
+
+runPrune :: Prune a -> SymbolicState -> IO (a, Stats)
+runPrune action = runReaderT (runWriterT action)
 
 -- | The prune tree function prunes a subtree when all of its paths are unfeasable:
 --   * A @Next (Assume p) subtree@ or @Next (Assert p) subtree@ is pruned when @p@ contradicts the assumptions;
 --   * In @Branch g l r@, @l@ is pruned when @g@ contradicts the assumptions, and @r@ is pruned when @~g@
 --     contradicts the assumptions.
-prune :: [Expr Typed] -> Tree Typed -> Prune (Tree Typed)
+prune :: [Expr Typed] -> Tree -> Prune Tree
 prune assumps = \case
     Empty -> return Empty
     Next (Assume p) t -> do
@@ -110,7 +125,7 @@ prune assumps = \case
         applyStateSubst :: Expr Typed -> Prune (Expr Typed)
         applyStateSubst e = foldM (flip substStateVar) e [fv | (fv, _) <- freeVariables e]
 
-wlpTree :: Predicate Typed -> Tree Typed -> [Predicate Typed]
+wlpTree :: Predicate Typed -> Tree -> [Predicate Typed]
 wlpTree q = \case
     Empty -> [q]
     Next stmt t -> map (wlp stmt) (wlpTree q t)
