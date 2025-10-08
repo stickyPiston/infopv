@@ -17,10 +17,15 @@ import qualified Data.Map as M
 type Typed = Type
 type Untyped = ()
 type Predicate = Expr
-type SymbolEnv = [(String, Z3.Symbol)]
+
+-- Environment for tree building
+type Gamma = [(String, Type)]
+
+-- Environment for forward symbolic execution for pruning
 type SymbolicState = M.Map String (Expr Typed)
 
-type Gamma = [(String, Type)]
+-- Environment for Expr to Z3 AST conversion
+type SymbolEnv = [(String, Z3.Symbol)]
 
 data Tree ann
     = Empty
@@ -63,11 +68,13 @@ buildTree k = go
         -- TODO: Make sure variables in blocks get unique names
         unroll n g b = IfThenElse g (b `Seq` unroll (n - 1) g b) Skip
 
+type Prune = ReaderT SymbolicState IO
+
 -- | The prune tree function prunes a subtree when all of its paths are unfeasable:
 --   * A @Next (Assume p) subtree@ or @Next (Assert p) subtree@ is pruned when @p@ contradicts the assumptions;
 --   * In @Branch g l r@, @l@ is pruned when @g@ contradicts the assumptions, and @r@ is pruned when @~g@
 --     contradicts the assumptions.
-prune :: [Expr Typed] -> Tree Typed -> ReaderT SymbolicState IO (Tree Typed)
+prune :: [Expr Typed] -> Tree Typed -> Prune (Tree Typed)
 prune assumps = \case
     Empty -> return Empty
     Next (Assume p) t -> do
@@ -92,15 +99,15 @@ prune assumps = \case
             (False, False) -> return Empty
             (True, True)   -> Branch g <$> prune (g : assumps) l <*> prune (OpNeg g : assumps) r
     where
-        checkFeasibility :: Expr Typed -> ReaderT SymbolicState IO Bool
+        checkFeasibility :: Expr Typed -> Prune Bool
         checkFeasibility p = liftIO $ evalZ3 do
             mapM fromExpr (p : assumps) >>= mkAnd >>= assert
             (== Sat) <$> check
 
-        substStateVar :: String -> Expr Typed -> ReaderT SymbolicState IO (Expr Typed)
+        substStateVar :: String -> Expr Typed -> Prune (Expr Typed)
         substStateVar fv e = asks \state -> (fv |-> state M.! fv) e
 
-        applyStateSubst :: Expr Typed -> ReaderT SymbolicState IO (Expr Typed)
+        applyStateSubst :: Expr Typed -> Prune (Expr Typed)
         applyStateSubst e = foldM (flip substStateVar) e [fv | (fv, _) <- freeVariables e]
 
 wlpTree :: Predicate Typed -> Tree Typed -> [Predicate Typed]
