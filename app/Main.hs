@@ -15,6 +15,7 @@ import Checker
 
 data Config = Config
     { k :: Int
+    , n :: Int
     , filepath :: String
     }
 
@@ -29,21 +30,33 @@ configParser = info parser fullDesc
                 <> value 10
                 <> metavar "INT"
                 )
+            <*> option auto
+                ( long "n"
+                <> help "The maximum length of a pth"
+                <> showDefault
+                <> value 100
+                <> metavar "INT"
+                )
             <*> argument str (metavar "FILE")
 
 main :: IO ()
 main = do
-    Config { k, filepath } <- execParser configParser
+    Config { k, n, filepath } <- execParser configParser
     parseGCLfile filepath >>= \case
         Left err -> putStrLn $ "Could not parse " <> filepath <> ": " <> err
         Right Program { stmt, input, output } -> do
             let initialGamma = [(name, ty) | VarDeclaration name ty <- input ++ output]
             let compTree = runReader (buildTree k stmt) initialGamma
-            (prunedCompTree, stats) <- runPrune (prune [] compTree) (M.fromList [(name, Var name ty) | VarDeclaration name ty <- input ++ output])
-            let pres = wlpTree (LitB True) prunedCompTree
-            evalZ3 do
-                forM pres fromExpr >>= mkAnd >>= mkNot >>= assert
-                traceM =<< solverToString
-                check >>= \case
-                    Sat -> liftIO $ putStrLn "Program invalid"
-                    Unsat -> liftIO $ putStrLn "Program valid"
+            let initialRho = M.fromList [(name, Var (name ++ "_0") ty) | VarDeclaration name ty <- input ++ output]
+            (valid, stats) <- evalZ3 do
+                true <- mkTrue
+                let initialSymbolicState = SymbolicState { environment = initialRho, pathLength = n, constraints = true }
+                runSE (verify compTree) initialSymbolicState
+            reportStats stats
+            putStrLn if valid then "Program valid" else "Program invalid"
+
+reportStats :: Stats -> IO ()
+reportStats Stats { pathsTooLong, prunedPaths, inspectedPaths } = do
+    putStrLn $ "paths longer than n: " ++ show pathsTooLong
+    putStrLn $ "number of times pruned: " ++ show prunedPaths
+    putStrLn $ "inspected paths: " ++ show inspectedPaths

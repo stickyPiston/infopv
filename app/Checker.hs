@@ -1,11 +1,10 @@
-module Checker (buildTree, wlpTree, fromExpr, prune, runPrune) where
+module Checker (buildTree, verify, runSE, SymbolicState(..), Stats(..)) where
 
-import GCLUtils
-import GCLParser.PrettyPrint
 import GCLParser.GCLDatatype
 
 import System.Environment (getArgs)
 import Z3.Monad as Z3 hiding (local)
+import qualified Z3.Monad as Z3
 import Control.Monad
 import ExamplesOfSemanticFunction
 import Data.Maybe
@@ -22,19 +21,17 @@ type Predicate = Expr
 data Stats = Stats
     { prunedPaths :: Int
     , inspectedPaths :: Int
+    , pathsTooLong :: Int
     } deriving (Show)
 
 instance Semigroup Stats where
-    Stats p1 i1 <> Stats p2 i2 = Stats (p1 + p2) (i1 + i2)
+    Stats p1 i1 l1 <> Stats p2 i2 l2 = Stats (p1 + p2) (i1 + i2) (l1 + l2)
 
 instance Monoid Stats where
-    mempty = Stats 0 0
+    mempty = Stats 0 0 0
 
 -- Environment for tree building
 type Gamma = [(String, Type)]
-
--- Environment for forward symbolic execution for pruning
-type SymbolicState = M.Map String (Expr Typed)
 
 -- Environment for Expr to Z3 AST conversion
 type SymbolEnv = [(String, Z3.Symbol)]
@@ -74,71 +71,11 @@ buildTree k = go
                 arrayTy <- asks $ fromJust . lookup x
                 stmt <- AAssign x arrayTy <$> annotatePredicate i <*> annotatePredicate e
                 return $ End stmt
-    
+
         unroll :: Int -> Expr Untyped -> Stmt Untyped -> Stmt Untyped
         unroll 0 g b = Assume $ OpNeg g
         -- TODO: Make sure variables in blocks get unique names
         unroll n g b = IfThenElse g (b `Seq` unroll (n - 1) g b) Skip
-
-type Prune = WriterT Stats (ReaderT SymbolicState IO)
-
-runPrune :: Prune a -> SymbolicState -> IO (a, Stats)
-runPrune action = runReaderT (runWriterT action)
-
--- | The prune tree function prunes a subtree when all of its paths are unfeasable:
---   * A @Next (Assume p) subtree@ or @Next (Assert p) subtree@ is pruned when @p@ contradicts the assumptions;
---   * In @Branch g l r@, @l@ is pruned when @g@ contradicts the assumptions, and @r@ is pruned when @~g@
---     contradicts the assumptions.
-prune :: [Expr Typed] -> Tree -> Prune Tree
-prune assumps = \case
-    Empty -> return Empty
-    Next (Assume p) t -> do
-        evaluatedCondition <- applyStateSubst p
-        Next (Assume p) <$> prune (evaluatedCondition : assumps) t
-    Next (Assign nm val) t -> do
-        val' <- applyStateSubst val
-        Next (Assign nm val) <$> local (M.insert nm val') (prune assumps t)
-    Next (AAssign nm ann idx val) t -> do
-        originalArray <- asks (M.! nm)
-        idx' <- applyStateSubst idx
-        val' <- applyStateSubst val
-        prunedSubtree <- local (M.insert nm (RepBy originalArray idx' val')) $ prune assumps t
-        return $ Next (AAssign nm ann idx val) prunedSubtree
-    Next stmt t -> do
-        Next stmt <$> prune assumps t
-    Branch g l r -> do
-        evaluatedGuard <- applyStateSubst g
-        (,) <$> checkFeasibility evaluatedGuard <*> checkFeasibility (OpNeg evaluatedGuard) >>= \case
-            (True, False)  -> Next (Assume g) <$> prune (g : assumps) l
-            (False, True)  -> Next (Assume (OpNeg g)) <$> prune (OpNeg g : assumps) r
-            (False, False) -> return Empty
-            (True, True)   -> Branch g <$> prune (g : assumps) l <*> prune (OpNeg g : assumps) r
-    where
-        checkFeasibility :: Expr Typed -> Prune Bool
-        checkFeasibility p = liftIO $ evalZ3 do
-            mapM fromExpr (p : assumps) >>= mkAnd >>= assert
-            (== Sat) <$> check
-
-        substStateVar :: String -> Expr Typed -> Prune (Expr Typed)
-        substStateVar fv e = asks \state -> (fv |-> state M.! fv) e
-
-        applyStateSubst :: Expr Typed -> Prune (Expr Typed)
-        applyStateSubst e = foldM (flip substStateVar) e [fv | (fv, _) <- freeVariables e]
-
-wlpTree :: Predicate Typed -> Tree -> [Predicate Typed]
-wlpTree q = \case
-    Empty -> [q]
-    Next stmt t -> map (wlp stmt) (wlpTree q t)
-    Branch g l r -> map (g `opImplication`) (wlpTree q l) <> map (OpNeg g `opImplication`) (wlpTree q r)
-
-wlp :: Stmt Typed -> Predicate Typed -> Predicate Typed
-wlp stmt q = case stmt of
-    Skip               -> q
-    Assert p           -> p `opAnd` q
-    Assume p           -> p `opImplication` q
-    Assign var e       -> (var |-> e) q
-    AAssign var a i e  -> (var |-> RepBy (Var var a) i e) q
-    _ -> error "wlp should only be called on statements from the computation paths"
 
 annotatePredicate :: Predicate Untyped -> Reader Gamma (Predicate Typed)
 annotatePredicate = \case
@@ -207,7 +144,7 @@ fromExpr e = do
             (left : varEnv,) <$> case ty of
                 AType _ -> (: arrEnv) . (name,) <$> mkStringSymbol ('#' : name)
                 _ -> return arrEnv
-        
+
         -- Take tuple of (variable environment, array size environment) and an expression,
         -- and produce the corresponding Z3 AST.
         go :: (SymbolEnv, SymbolEnv) -> Expr Type -> Z3 Z3.AST
@@ -253,3 +190,82 @@ fromExpr e = do
             (SizeOf (Var name t)) -> mkVar (fromJust $ lookup name arrEnv) =<< mkIntSort
             (RepBy var i val)     -> join $ mkStore <$> go env var <*> go env i  <*> go env val
             (Cond g e1 e2)        -> join $ mkIte   <$> go env g   <*> go env e1 <*> go env e2
+
+fromExpr' :: Expr Typed -> SE Z3.AST
+fromExpr' = lift . lift . fromExpr
+
+data SymbolicState = SymbolicState
+    { environment :: M.Map String (Expr Typed)
+    , constraints :: Z3.AST
+    , pathLength  :: Int
+    }
+
+-- | The Symbolic Eval (SE) monad
+type SE = WriterT Stats (ReaderT SymbolicState Z3)
+
+instance (Monoid s, MonadZ3 m) => MonadZ3 (WriterT s m) where
+    getSolver = WriterT $ (, mempty) <$> getSolver
+    getContext = WriterT $ (, mempty) <$> getContext
+
+runSE :: SE a -> SymbolicState -> Z3 (a, Stats)
+runSE = runReaderT . runWriterT
+
+assume :: Expr Typed -> SE a -> SE a
+assume p a = do
+    z3Value <- fromExpr' p
+    newConstraints <- asks constraints >>= mkAnd . (: [z3Value])
+    local (\s -> s { constraints = newConstraints }) a
+
+assign :: String -> Expr Typed -> SE a -> SE a
+assign nm val = local \s -> s { environment = M.insert nm val $ environment s }
+
+report :: Stats -> SE Bool
+report s = tell s >> return True
+
+pathTooLong, inspectedPath, prunedPath :: Stats
+pathTooLong = mempty { pathsTooLong = 1 }
+inspectedPath = mempty { inspectedPaths = 1 }
+prunedPath = mempty { prunedPaths = 1 }
+
+verify :: Tree -> SE Bool
+verify t = asks pathLength >>= \case
+    0 -> report pathTooLong
+    _ -> case t of
+        Empty -> report inspectedPath
+        Next (Assume p) t -> do
+            evaluatedCondition <- eval p
+            assume evaluatedCondition $ continue t
+        Next (Assert p) t -> eval p >>= checkValid >>= \case
+            True -> continue t
+            False -> trace ("Violated assertion: " ++ show p) $ return False
+        Next (Assign nm val) t -> do
+            val' <- eval val
+            assign nm val' $ continue t
+        Next (AAssign nm ann idx val) t -> do
+            repby <- liftM3 RepBy (eval $ Var nm ann) (eval idx) (eval val)
+            assign nm repby $ continue t
+        Next Skip t -> continue t
+        Branch g l r -> liftM2 (&&) (checkBranch g l) (checkBranch (OpNeg g) r)
+    where
+        continue :: Tree -> SE Bool
+        continue t = local (\s -> s { pathLength = pathLength s - 1 }) $ verify t
+
+        predicate :: Expr Typed -> SE Z3.AST
+        predicate p = join (liftM2 mkImplies (asks constraints) (fromExpr' p))
+
+        checkValid :: Expr Typed -> SE Bool
+        checkValid p = Z3.local $ predicate p >>= mkNot >>= assert >> (Unsat ==) <$> check
+
+        checkSatisfiability :: Expr Typed -> SE Z3.Result
+        checkSatisfiability p = Z3.local $ predicate p >>= assert >> check
+
+        checkBranch :: Expr Typed -> Tree -> SE Bool
+        checkBranch g t = eval g >>= checkSatisfiability >>= \case
+            Sat -> assume g $ continue t
+            Unsat -> report prunedPath
+
+        substStateVar :: String -> Expr Typed -> SE (Expr Typed)
+        substStateVar fv e = asks \s -> (fv |-> environment s M.! fv) e
+
+        eval :: Expr Typed -> SE (Expr Typed)
+        eval e = foldM (flip substStateVar) e [fv | (fv, _) <- freeVariables e]
