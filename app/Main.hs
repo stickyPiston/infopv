@@ -40,6 +40,7 @@ main = do
             let initialGamma = [(name, ty) | VarDeclaration name ty <- input ++ output]
             let compTree = runReader (buildTree k stmt) initialGamma
             (prunedCompTree, stats) <- runPrune (prune [] compTree) (M.fromList [(name, Var name ty) | VarDeclaration name ty <- input ++ output])
+            print stats
             let pres = wlpTree (LitB True) prunedCompTree
             evalZ3 do
                 forM pres fromExpr >>= mkAnd >>= mkNot >>= assert

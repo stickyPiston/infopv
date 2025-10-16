@@ -25,6 +25,7 @@ executable infopv
   extra-include-dirs:  /usr/include
   main-is:             Main.hs
   other-modules:       Checker
+                     , Stats
   hs-source-dirs:      app
   default-extensions:  LambdaCase
                      , NamedFieldPuns

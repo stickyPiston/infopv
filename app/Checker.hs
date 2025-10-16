@@ -15,20 +15,11 @@ import Debug.Trace
 
 import qualified Data.Map as M
 
+import Stats
+
 type Typed = Type
 type Untyped = ()
 type Predicate = Expr
-
-data Stats = Stats
-    { prunedPaths :: Int
-    , inspectedPaths :: Int
-    } deriving (Show)
-
-instance Semigroup Stats where
-    Stats p1 i1 <> Stats p2 i2 = Stats (p1 + p2) (i1 + i2)
-
-instance Monoid Stats where
-    mempty = Stats 0 0
 
 -- Environment for tree building
 type Gamma = [(String, Type)]
@@ -91,7 +82,7 @@ runPrune action = runReaderT (runWriterT action)
 --     contradicts the assumptions.
 prune :: [Expr Typed] -> Tree -> Prune Tree
 prune assumps = \case
-    Empty -> return Empty
+    Empty -> tell (Stats 1 0) >> return Empty
     Next (Assume p) t -> do
         evaluatedCondition <- applyStateSubst p
         Next (Assume p) <$> prune (evaluatedCondition : assumps) t
@@ -109,9 +100,9 @@ prune assumps = \case
     Branch g l r -> do
         evaluatedGuard <- applyStateSubst g
         (,) <$> checkFeasibility evaluatedGuard <*> checkFeasibility (OpNeg evaluatedGuard) >>= \case
-            (True, False)  -> Next (Assume g) <$> prune (g : assumps) l
-            (False, True)  -> Next (Assume (OpNeg g)) <$> prune (OpNeg g : assumps) r
-            (False, False) -> return Empty
+            (True, False)  -> tell (Stats 1 1) >> Next (Assume g) <$> prune (g : assumps) l
+            (False, True)  -> tell (Stats 1 1) >> Next (Assume (OpNeg g)) <$> prune (OpNeg g : assumps) r
+            (False, False) -> tell (Stats 2 2) >> return Empty
             (True, True)   -> Branch g <$> prune (g : assumps) l <*> prune (OpNeg g : assumps) r
     where
         checkFeasibility :: Expr Typed -> Prune Bool
