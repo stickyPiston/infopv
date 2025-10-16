@@ -1,4 +1,4 @@
-module Checker (buildTree, verify, runSE, SymbolicState(..), Stats(..)) where
+module Checker (buildTree, verify, runSE, SymbolicState(..)) where
 
 import GCLParser.GCLDatatype
 
@@ -14,21 +14,11 @@ import Debug.Trace
 
 import qualified Data.Map as M
 
+import Stats
+
 type Typed = Type
 type Untyped = ()
 type Predicate = Expr
-
-data Stats = Stats
-    { prunedPaths :: Int
-    , inspectedPaths :: Int
-    , pathsTooLong :: Int
-    } deriving (Show)
-
-instance Semigroup Stats where
-    Stats p1 i1 l1 <> Stats p2 i2 l2 = Stats (p1 + p2) (i1 + i2) (l1 + l2)
-
-instance Monoid Stats where
-    mempty = Stats 0 0 0
 
 -- Environment for tree building
 type Gamma = [(String, Type)]
@@ -225,7 +215,7 @@ report s = tell s >> return True
 pathTooLong, inspectedPath, prunedPath :: Stats
 pathTooLong = mempty { pathsTooLong = 1 }
 inspectedPath = mempty { inspectedPaths = 1 }
-prunedPath = mempty { prunedPaths = 1 }
+prunedPath = mempty { prunedPaths = 1, inspectedPaths = 1 }
 
 verify :: Tree -> SE Bool
 verify t = asks pathLength >>= \case
@@ -250,14 +240,15 @@ verify t = asks pathLength >>= \case
         continue :: Tree -> SE Bool
         continue t = local (\s -> s { pathLength = pathLength s - 1 }) $ verify t
 
-        predicate :: Expr Typed -> SE Z3.AST
-        predicate p = join (liftM2 mkImplies (asks constraints) (fromExpr' p))
-
         checkValid :: Expr Typed -> SE Bool
-        checkValid p = Z3.local $ predicate p >>= mkNot >>= assert >> (Unsat ==) <$> check
+        checkValid p = Z3.local $
+            join (liftM2 mkImplies (asks constraints) (fromExpr' p))
+                >>= mkNot >>= assert >> (Unsat ==) <$> check
 
         checkSatisfiability :: Expr Typed -> SE Z3.Result
-        checkSatisfiability p = Z3.local $ predicate p >>= assert >> check
+        checkSatisfiability p = Z3.local $
+            join (liftM2 (\a b -> mkAnd [a, b]) (fromExpr' p) (asks constraints))
+                >>= assert >> check
 
         checkBranch :: Expr Typed -> Tree -> SE Bool
         checkBranch g t = eval g >>= checkSatisfiability >>= \case

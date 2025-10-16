@@ -52,11 +52,5 @@ main = do
                 true <- mkTrue
                 let initialSymbolicState = SymbolicState { environment = initialRho, pathLength = n, constraints = true }
                 runSE (verify compTree) initialSymbolicState
-            reportStats stats
+            print stats
             putStrLn if valid then "Program valid" else "Program invalid"
-
-reportStats :: Stats -> IO ()
-reportStats Stats { pathsTooLong, prunedPaths, inspectedPaths } = do
-    putStrLn $ "paths longer than n: " ++ show pathsTooLong
-    putStrLn $ "number of times pruned: " ++ show prunedPaths
-    putStrLn $ "inspected paths: " ++ show inspectedPaths
