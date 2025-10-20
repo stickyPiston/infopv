@@ -9,9 +9,10 @@ data Stats = Stats
 instance Show Stats where
     show (Stats i p l) = unlines
         [ "Statistics:"
-        , "\tInspected paths: " ++ show i
-        , "\tPruned paths:    " ++ show p
-        , "\tPaths too long:  " ++ show l
+        , "\tTotal inspected paths: " ++ show (i + p + l)
+        , "\tFull paths:            " ++ show i
+        , "\tPruned paths:          " ++ show p
+        , "\tPaths too long:        " ++ show l
         ]
 
 instance Semigroup Stats where
@@ -19,3 +20,8 @@ instance Semigroup Stats where
 
 instance Monoid Stats where
     mempty = Stats 0 0 0
+
+pathTooLong, inspectedPath, prunedPath :: Stats
+inspectedPath = mempty { inspectedPaths = 1 }
+pathTooLong = mempty { pathsTooLong = 1 }
+prunedPath = mempty { prunedPaths = 1 }

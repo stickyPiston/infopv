@@ -212,11 +212,6 @@ assign nm val = local \s -> s { environment = M.insert nm val $ environment s }
 report :: Stats -> SE Bool
 report s = tell s >> return True
 
-pathTooLong, inspectedPath, prunedPath :: Stats
-pathTooLong = mempty { pathsTooLong = 1 }
-inspectedPath = mempty { inspectedPaths = 1 }
-prunedPath = mempty { prunedPaths = 1, inspectedPaths = 1 }
-
 verify :: Tree -> SE Bool
 verify t = asks pathLength >>= \case
     0 -> report pathTooLong
