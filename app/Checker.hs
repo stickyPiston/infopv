@@ -1,4 +1,4 @@
-module Checker (buildTree, verify, runSE, SymbolicState(..)) where
+module Checker where
 
 import GCLParser.GCLDatatype
 
@@ -10,6 +10,9 @@ import ExamplesOfSemanticFunction
 import Data.Maybe
 import Control.Monad.Reader
 import Control.Monad.Writer
+import Control.Monad.State
+import Control.Monad.RWS
+import System.Random.Stateful
 import Debug.Trace
 
 import qualified Data.Map as M
@@ -182,29 +185,43 @@ fromExpr e = do
             (Cond g e1 e2)        -> join $ mkIte   <$> go env g   <*> go env e1 <*> go env e2
 
 fromExpr' :: Expr Typed -> SE Z3.AST
-fromExpr' = lift . lift . fromExpr
+fromExpr' = lift . fromExpr
+
+data PruneHeuristic
+    = None
+    | Full
+    | LengthBased
 
 data SymbolicState = SymbolicState
-    { environment :: M.Map String (Expr Typed)
-    , constraints :: Z3.AST
-    , pathLength  :: Int
+    { environment    :: M.Map String (Expr Typed)
+    , constraints    :: Z3.AST
+    , pathLength     :: Int
+    , maxLength      :: Int
+    , pruneHeuristic :: PruneHeuristic
     }
 
 -- | The Symbolic Eval (SE) monad
-type SE = WriterT Stats (ReaderT SymbolicState Z3)
+type SE = RWST SymbolicState Stats StdGen Z3
 
-instance (Monoid s, MonadZ3 m) => MonadZ3 (WriterT s m) where
-    getSolver = WriterT $ (, mempty) <$> getSolver
-    getContext = WriterT $ (, mempty) <$> getContext
+instance (Monoid w, MonadZ3 m) => MonadZ3 (RWST r w s m) where
+    getSolver = RWST \ _ s -> (, s, mempty) <$> getSolver
+    getContext = RWST \ _ s -> (, s, mempty) <$> getContext
 
-runSE :: SE a -> SymbolicState -> Z3 (a, Stats)
-runSE = runReaderT . runWriterT
+runSE :: SE a -> SymbolicState -> StdGen -> Z3 (a, Stats)
+runSE = evalRWST
 
 assume :: Expr Typed -> SE a -> SE a
 assume p a = do
     z3Value <- fromExpr' p
     newConstraints <- asks constraints >>= mkAnd . (: [z3Value])
     local (\s -> s { constraints = newConstraints }) a
+
+randomRange :: Int -> Int -> SE Int
+randomRange lo hi = do
+    g <- get
+    let (a, g') = randomR (lo, hi) g
+    modify $ const g'
+    return a
 
 assign :: String -> Expr Typed -> SE a -> SE a
 assign nm val = local \s -> s { environment = M.insert nm val $ environment s }
@@ -240,10 +257,18 @@ verify t = asks pathLength >>= \case
             join (liftM2 mkImplies (asks constraints) (fromExpr' p))
                 >>= mkNot >>= assert >> (Unsat ==) <$> check
 
-        checkSatisfiability :: Expr Typed -> SE Z3.Result
-        checkSatisfiability p = Z3.local $
+        prune p = Z3.local $
             join (liftM2 (\a b -> mkAnd [a, b]) (fromExpr' p) (asks constraints))
                 >>= assert >> check
+
+        checkSatisfiability :: Expr Typed -> SE Z3.Result
+        checkSatisfiability p = asks pruneHeuristic >>= \case
+            Full -> prune p
+            None -> return Sat
+            LengthBased -> do
+                r <- asks maxLength >>= randomRange 0
+                l <- asks pathLength
+                if r < l then prune p else return Sat
 
         checkBranch :: Expr Typed -> Tree -> SE Bool
         checkBranch g t = do

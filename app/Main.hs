@@ -12,6 +12,7 @@ import Debug.Trace
 import qualified Data.Map as M
 
 import Checker
+import System.Random (initStdGen)
 
 data Config = Config
     { k :: Int
@@ -48,9 +49,10 @@ main = do
             let initialGamma = [(name, ty) | VarDeclaration name ty <- input ++ output]
             let compTree = runReader (buildTree k stmt) initialGamma
             let initialRho = M.fromList [(name, Var (name ++ "_0") ty) | VarDeclaration name ty <- input ++ output]
+            g <- initStdGen
             (valid, stats) <- evalZ3 do
                 true <- mkTrue
-                let initialSymbolicState = SymbolicState { environment = initialRho, pathLength = n, constraints = true }
-                runSE (verify compTree) initialSymbolicState
+                let initialSymbolicState = SymbolicState { environment = initialRho, pathLength = n, constraints = true, maxLength = k, pruneHeuristic = LengthBased }
+                runSE (verify compTree) initialSymbolicState g
             print stats
             putStrLn if valid then "Program valid" else "Program invalid"

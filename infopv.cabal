@@ -20,6 +20,7 @@ executable infopv
                      , mtl
                      , optparse-applicative
                      , containers
+                     , random
   -- location to z3 bin and lib:
   extra-lib-dirs:      /usr/lib/aarch64-linux-gnu
   extra-include-dirs:  /usr/include
