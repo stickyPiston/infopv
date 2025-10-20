@@ -246,9 +246,11 @@ verify t = asks pathLength >>= \case
                 >>= assert >> check
 
         checkBranch :: Expr Typed -> Tree -> SE Bool
-        checkBranch g t = eval g >>= checkSatisfiability >>= \case
-            Sat -> assume g $ continue t
-            Unsat -> report prunedPath
+        checkBranch g t = do
+            evalG <- eval g
+            checkSatisfiability evalG >>= \case
+                Sat -> assume evalG $ continue t
+                Unsat -> report prunedPath
 
         substStateVar :: String -> Expr Typed -> SE (Expr Typed)
         substStateVar fv e = asks \s -> (fv |-> environment s M.! fv) e
