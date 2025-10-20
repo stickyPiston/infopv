@@ -222,7 +222,7 @@ verify t = asks pathLength >>= \case
             assume evaluatedCondition $ continue t
         Next (Assert p) t -> eval p >>= checkValid >>= \case
             True -> continue t
-            False -> trace ("Violated assertion: " ++ show p) $ return False
+            False -> tell (violatedAssertion p) >> return False
         Next (Assign nm val) t -> do
             val' <- eval val
             assign nm val' $ continue t

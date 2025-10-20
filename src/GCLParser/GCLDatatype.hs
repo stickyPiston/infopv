@@ -15,13 +15,13 @@ type Depth = Int
 data PrimitiveType 
     = PTInt 
     | PTBool
-    deriving (Show, Eq)
+    deriving (Show, Eq, Ord)
 
 data Type 
     = PType PrimitiveType  -- primitive tyoe
     | RefType
     | AType PrimitiveType  -- array type, one dimensional
-    deriving (Show, Eq)
+    deriving (Show, Eq, Ord)
 
 data VarDeclaration 
     = VarDeclaration String Type
@@ -93,13 +93,13 @@ data Expr ann
     | Cond               (Expr ann)   (Expr ann)   (Expr ann)
     -- | NewStore           Expr
     -- | Dereference        String
-    deriving (Eq) 
+    deriving (Eq, Ord) 
 
 data BinOp = And | Or | Implication 
     | LessThan | LessThanEqual | GreaterThan | GreaterThanEqual | Equal
     | Minus | Plus | Multiply | Divide
     | Alias
-    deriving (Eq)
+    deriving (Eq, Ord, Enum)
 
 opAnd :: Expr a -> Expr a -> Expr a
 opAnd = BinopExpr And

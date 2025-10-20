@@ -1,3 +1,7 @@
 A(x:int | y:int) {
-    assert x=y
+    if x > 10 then {
+        assert x < 10
+    } else {
+        assert 1=0
+    }
 }
