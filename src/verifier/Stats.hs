@@ -1,8 +1,10 @@
-module Stats where
+module Verifier.Stats where
 
 import GCLParser.GCLDatatype ( Type, Expr )
 
 import qualified Data.Set as S
+import Control.DeepSeq (NFData)
+import GHC.Generics
 
 data Stats = Stats
     { inspectedPaths :: Int
@@ -10,6 +12,7 @@ data Stats = Stats
     , pathsTooLong :: Int
     , violatedAssertions :: S.Set (Expr Type)
     }
+    deriving (Generic, NFData)
 
 instance Show Stats where
     show (Stats i p l va) = unlines $

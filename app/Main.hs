@@ -11,12 +11,13 @@ import Options.Applicative
 import Debug.Trace
 import qualified Data.Map as M
 
-import Checker
+import Verifier.Checker
 import System.Random (initStdGen)
 
 data Config = Config
     { k :: Int
     , n :: Int
+    , ph :: PruneHeuristic
     , filepath :: String
     }
 
@@ -38,21 +39,21 @@ configParser = info parser fullDesc
                 <> value 100
                 <> metavar "INT"
                 )
+            <*> option auto
+                ( long "ph"
+                <> help "Which heuristic the pruning should abide by"
+                <> showDefault
+                <> value LengthBased
+                <> metavar "HEURISTIC"
+                )
             <*> argument str (metavar "FILE")
 
 main :: IO ()
 main = do
-    Config { k, n, filepath } <- execParser configParser
+    Config { k, n, ph, filepath } <- execParser configParser
     parseGCLfile filepath >>= \case
         Left err -> putStrLn $ "Could not parse " <> filepath <> ": " <> err
-        Right Program { stmt, input, output } -> do
-            let initialGamma = [(name, ty) | VarDeclaration name ty <- input ++ output]
-            let compTree = runReader (buildTree k stmt) initialGamma
-            let initialRho = M.fromList [(name, Var (name ++ "_0") ty) | VarDeclaration name ty <- input ++ output]
-            g <- initStdGen
-            (valid, stats) <- evalZ3 do
-                true <- mkTrue
-                let initialSymbolicState = SymbolicState { environment = initialRho, pathLength = n, constraints = true, maxLength = k, pruneHeuristic = LengthBased }
-                runSE (verify compTree) initialSymbolicState g
+        Right program -> do
+            (valid, stats) <- verifyProgram k n ph program
             print stats
             putStrLn if valid then "Program valid" else "Program invalid"

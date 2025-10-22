@@ -1,8 +1,7 @@
-module Checker where
+module Verifier.Checker where
 
 import GCLParser.GCLDatatype
 
-import System.Environment (getArgs)
 import Z3.Monad as Z3 hiding (local)
 import qualified Z3.Monad as Z3
 import Control.Monad
@@ -13,11 +12,10 @@ import Control.Monad.Writer
 import Control.Monad.State
 import Control.Monad.RWS
 import System.Random.Stateful
-import Debug.Trace
 
 import qualified Data.Map as M
 
-import Stats
+import Verifier.Stats
 
 type Typed = Type
 type Untyped = ()
@@ -183,6 +181,7 @@ fromExpr e = do
             (SizeOf (Var name t)) -> mkVar (fromJust $ lookup name arrEnv) =<< mkIntSort
             (RepBy var i val)     -> join $ mkStore <$> go env var <*> go env i  <*> go env val
             (Cond g e1 e2)        -> join $ mkIte   <$> go env g   <*> go env e1 <*> go env e2
+            _ -> error "Invalid expression type"
 
 fromExpr' :: Expr Typed -> SE Z3.AST
 fromExpr' = lift . fromExpr
@@ -191,6 +190,7 @@ data PruneHeuristic
     = None
     | Full
     | LengthBased
+    deriving (Show, Read)
 
 data SymbolicState = SymbolicState
     { environment    :: M.Map String (Expr Typed)
@@ -248,6 +248,7 @@ verify t = asks pathLength >>= \case
             assign nm repby $ continue t
         Next Skip t -> continue t
         Branch g l r -> liftM2 (&&) (checkBranch g l) (checkBranch (OpNeg g) r)
+        _ -> error "Invalid statement in tree"
     where
         continue :: Tree -> SE Bool
         continue t = local (\s -> s { pathLength = pathLength s - 1 }) $ verify t
@@ -276,9 +277,21 @@ verify t = asks pathLength >>= \case
             checkSatisfiability evalG >>= \case
                 Sat -> assume evalG $ continue t
                 Unsat -> report prunedPath
+                Undef -> error "Undefined SE Result"
 
         substStateVar :: String -> Expr Typed -> SE (Expr Typed)
         substStateVar fv e = asks \s -> (fv |-> environment s M.! fv) e
 
         eval :: Expr Typed -> SE (Expr Typed)
         eval e = foldM (flip substStateVar) e [fv | (fv, _) <- freeVariables e]
+
+verifyProgram :: Int -> Int -> PruneHeuristic -> Program () -> IO (Bool, Stats)
+verifyProgram k n ph Program{stmt, input, output} = do 
+    let initialGamma = [(name, ty) | VarDeclaration name ty <- input ++ output]
+    let compTree = runReader (buildTree k stmt) initialGamma
+    let initialRho = M.fromList [(name, Var (name ++ "_0") ty) | VarDeclaration name ty <- input ++ output]
+    g <- initStdGen
+    evalZ3 do
+        true <- mkTrue
+        let initialSymbolicState = SymbolicState { environment = initialRho, pathLength = n, constraints = true, maxLength = k, pruneHeuristic = ph }
+        runSE (verify compTree) initialSymbolicState g

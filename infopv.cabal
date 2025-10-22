@@ -23,16 +23,30 @@ executable infopv
                      , random
   -- location to z3 bin and lib:
   extra-lib-dirs:      /usr/lib/aarch64-linux-gnu
-  extra-include-dirs:  /usr/include
   main-is:             Main.hs
-  other-modules:       Checker
-                     , Stats
   hs-source-dirs:      app
+  default-language:    Haskell2010
   default-extensions:  LambdaCase
                      , NamedFieldPuns
                      , BlockArguments
                      , TupleSections
                      , PatternSynonyms
+
+benchmark verifier-bench
+  type:              exitcode-stdio-1.0
+  hs-source-dirs:    bench
+  main-is:           Benchmark.hs
+  build-depends:     base
+                   , criterion
+                   , parser
+                   , z3
+                   , transformers
+                   , mtl
+                   , containers
+                   , random
+  default-language: Haskell2010
+  default-extensions: BangPatterns
+  ghc-options: -O2
 
 library parser
   exposed-modules:     GCLParser.Parser
@@ -44,6 +58,8 @@ library parser
                      , GCLLexer.Token
                      , GCLLexer.Lexer
                      , ExamplesOfSemanticFunction
+                     , Verifier.Checker
+                     , Verifier.Stats
   -- other-extensions:
   build-depends:       base   >= 4.10
                      , array
@@ -51,9 +67,20 @@ library parser
                      , optparse-applicative
                      , pretty
                      , directory
+                     , z3
+                     , transformers
+                     , mtl
+                     , containers
+                     , random
+                     , deepseq
   hs-source-dirs:      src
   build-tools:         happy, alex
   default-language:    Haskell2010
   GHC-Options:         -Wall
-  default-extensions:  TupleSections
+  default-extensions:  LambdaCase
                      , NamedFieldPuns
+                     , BlockArguments
+                     , TupleSections
+                     , PatternSynonyms
+                     , DeriveGeneric
+                     , DeriveAnyClass
