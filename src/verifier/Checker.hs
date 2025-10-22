@@ -285,7 +285,7 @@ verify t = asks pathLength >>= \case
         eval :: Expr Typed -> SE (Expr Typed)
         eval e = foldM (flip substStateVar) e [fv | (fv, _) <- freeVariables e]
 
-verifyProgram :: Int -> Int -> PruneHeuristic -> Program () -> IO (Bool, Stats)
+verifyProgram :: Int -> Int -> PruneHeuristic -> Program -> IO (Bool, Stats)
 verifyProgram k n ph Program{stmt, input, output} = do 
     let initialGamma = [(name, ty) | VarDeclaration name ty <- input ++ output]
     let compTree = runReader (buildTree k stmt) initialGamma

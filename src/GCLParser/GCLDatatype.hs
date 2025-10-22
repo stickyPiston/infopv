@@ -35,13 +35,13 @@ data Procedure
     deriving (Show)
 -}
 
-data Program ann
+data Program
     = Program { 
 --                pre    :: Expr, 
               name   :: String 
               , input  :: [VarDeclaration]
               , output :: [VarDeclaration]
-              , stmt   :: Stmt ann
+              , stmt   :: Stmt ()
 --              , procs  :: [Procedure]
 --              , post   :: Expr 
               } 

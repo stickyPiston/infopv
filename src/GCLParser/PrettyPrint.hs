@@ -6,10 +6,10 @@ import Text.PrettyPrint
 
 import GCLParser.GCLDatatype
 
-ppProgram2String :: Program a -> String
+ppProgram2String :: Program -> String
 ppProgram2String prg = show . ppProgram $ prg
 
-ppProgram :: Program a -> Doc
+ppProgram :: Program -> Doc
 ppProgram Program {name,input,output,stmt}
     =   (text name <> char '(' <> args <> text ") {")
     $+$ tab (ppStmt stmt)

@@ -407,7 +407,7 @@ exec state stmt = case stmt of
 -- are restored. The values of output variables are not restored,
 -- of course.
 --
-execProgram :: Program a -> State -> Either (String,State) State
+execProgram :: Program -> State -> Either (String,State) State
 execProgram (Program name inputvars outputvars stmt) state =
   let
   inputParamNames   = [ name | VarDeclaration name ty <- inputvars]

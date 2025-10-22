@@ -82,7 +82,7 @@ import Debug.Trace
 
 -- | Program parsing
 
-PProgram    :: { Program () }
+PProgram    :: { Program }
 --             : PConditions identifier popen PVarDeclarations bar PVarDeclarations pclose copen PStatements cclose PConditions PProcedures
 --                { Program $1 $2 $4 $6 $9 $12 $11 }
              : identifier popen PVarDeclarations bar PVarDeclarations pclose copen PStatements cclose 
@@ -217,11 +217,11 @@ stripComment input = unlines . map stripCommentWorker . lines $ input
       
 
 -- Parse a string containing a GCL program
-parseGCLstring :: String -> ParseResult (Program ())
+parseGCLstring :: String -> ParseResult Program
 parseGCLstring str = parseGCL . lexer . stripComment $ str
     
 -- Parse a GCL program from a text file    
-parseGCLfile :: FilePath -> IO (ParseResult (Program ()))
+parseGCLfile :: FilePath -> IO (ParseResult Program)
 parseGCLfile path = do
     file <- readFile path
     return . parseGCLstring $ file

@@ -252,7 +252,7 @@ mutateStmt stmt = filter (\m -> fst m /= NO_MUTATION) $ mutate stmt
     --     m1 : group1 ++ group2
 
 
-mutateProgram :: Program a -> [(MutationType, Program a)]
+mutateProgram :: Program -> [(MutationType, Program)]
 mutateProgram (Program name inputParams outputParams body)
    =
    map (Program name inputParams outputParams $>) $ mutateStmt body
