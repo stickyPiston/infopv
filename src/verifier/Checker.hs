@@ -1,8 +1,9 @@
+{-# OPTIONS_GHC -Wno-orphans #-}
 module Verifier.Checker where
 
 import GCLParser.GCLDatatype
 
-import Z3.Monad as Z3 hiding (local)
+import Z3.Monad as Z3 hiding (local, simplify)
 import qualified Z3.Monad as Z3
 import Control.Monad
 import ExamplesOfSemanticFunction
@@ -17,6 +18,7 @@ import qualified Data.Map as M
 
 import Verifier.Tree
 import Verifier.Stats
+import Verifier.Simplifier
 
 -- Environment for Expr to Z3 AST conversion
 type SymbolEnv = [(String, Z3.Symbol)]
@@ -101,7 +103,7 @@ fromExpr e = do
                     Plus -> mkAdd [lhs, rhs]
                     Multiply -> mkMul [lhs, rhs]
                     Divide -> mkDiv lhs rhs
-                    Alias -> undefined
+                    Alias -> mkEq lhs rhs
             -- (NewStore e)          -> _
             (Forall var b)        -> do
                 sym <- mkStringSymbol var
@@ -129,7 +131,7 @@ data PruneHeuristic
 
 data SymbolicState = SymbolicState
     { environment    :: M.Map String (Expr Typed)
-    , constraints    :: Z3.AST
+    , constraints    :: [Expr Typed]
     , pathLength     :: Int
     , maxLength      :: Int
     , pruneHeuristic :: PruneHeuristic
@@ -146,10 +148,7 @@ runSE :: SE a -> SymbolicState -> StdGen -> Z3 (a, Stats)
 runSE = evalRWST
 
 assume :: Expr Typed -> SE a -> SE a
-assume p a = do
-    z3Value <- fromExpr' p
-    newConstraints <- asks constraints >>= mkAnd . (: [z3Value])
-    local (\s -> s { constraints = newConstraints }) a
+assume p = local (\s -> s { constraints = simplify p : constraints s })
 
 randomRange :: Int -> Int -> SE Int
 randomRange lo hi = do
@@ -172,9 +171,11 @@ verify tree = asks pathLength >>= \case
         Next (Assume p) t -> do
             evaluatedCondition <- evalSE p
             assume evaluatedCondition $ continue t
-        Next (Assert p) t -> evalSE p >>= checkValid >>= \case
-            True -> continue t
-            False -> tell (violatedAssertion p) >> return False
+        Next (Assert p) t -> do
+            simpleP <- simplify <$> evalSE p
+            checkValid simpleP >>= \case
+                True -> continue t
+                False -> tell (violatedAssertion simpleP) >> return False
         Next (Assign nm val) t -> do
             val' <- evalSE val
             assign nm val' $ continue t
@@ -189,13 +190,15 @@ verify tree = asks pathLength >>= \case
         continue t = local (\s -> s { pathLength = pathLength s - 1 }) $ verify t
 
         checkValid :: Expr Typed -> SE Bool
-        checkValid p = Z3.local $
-            join (liftM2 mkImplies (asks constraints) (fromExpr' p))
-                >>= mkNot >>= assert >> (Unsat ==) <$> check
+        checkValid p = Z3.local do
+            relevantConstraints <- asks (filterIrrelevantConstraints p . constraints) >>= mapM fromExpr' >>= mkAnd
+            z3Predicate <- fromExpr' p
+            (relevantConstraints `mkImplies` z3Predicate) >>= mkNot >>= assert >> (Unsat ==) <$> check
 
-        prune p = Z3.local $
-            join (liftM2 (\a b -> mkAnd [a, b]) (fromExpr' p) (asks constraints))
-                >>= assert >> check
+        prune :: Expr Typed -> SE Z3.Result
+        prune p = Z3.local do
+            relevantConstraints <- asks (filterIrrelevantConstraints p . constraints) >>= mapM fromExpr'
+            fromExpr' p >>= mkAnd . (: relevantConstraints) >>= assert >> check
 
         checkSatisfiability :: Expr Typed -> SE Z3.Result
         checkSatisfiability p = asks pruneHeuristic >>= \case
@@ -228,6 +231,5 @@ verifyProgram k n ph p Program{stmt, input, output} = do
     let initialRho = M.fromList [(name, Var (name ++ "_0") ty) | VarDeclaration name ty <- input ++ output]
     g <- initStdGen
     evalZ3 do
-        true <- mkTrue
-        let initialSymbolicState = SymbolicState { environment = initialRho, pathLength = n, constraints = true, maxLength = k, pruneHeuristic = ph }
+        let initialSymbolicState = SymbolicState { environment = initialRho, pathLength = n, constraints = [], maxLength = k, pruneHeuristic = ph }
         runSE (verify compTree) initialSymbolicState g

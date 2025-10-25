@@ -1,8 +1,5 @@
-A(x:int | y:int) {
-    assume x > 10 ;
-    if x < 1 then {
-        assert false
-    } else {
-        assert true
-    }
+A(a : []int, b : int | y : int) {
+    a[10] := 10 ;
+    assume a[20] == y ;
+    assert a[10] == 10 
 }
