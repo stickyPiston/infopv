@@ -15,76 +15,11 @@ import System.Random.Stateful
 
 import qualified Data.Map as M
 
+import Verifier.Tree
 import Verifier.Stats
-
-type Typed = Type
-type Untyped = ()
-type Predicate = Expr
-
--- Environment for tree building
-type Gamma = [(String, Type)]
 
 -- Environment for Expr to Z3 AST conversion
 type SymbolEnv = [(String, Z3.Symbol)]
-
-data Tree
-    = Empty
-    | Next (Stmt Typed) Tree
-    | Branch (Expr Typed) Tree Tree
-    deriving (Show)
-
-pattern End :: Stmt Typed -> Tree
-pattern End s = Next s Empty
-
-instance Semigroup Tree where
-    t <> Empty = t
-    Empty <> t = t
-    Next s1 t1 <> t2 = Next s1 (t1 <> t2)
-    Branch g t1 t2 <> t3 = Branch g (t1 <> t3) (t2 <> t3)
-
-instance Monoid Tree where
-    mempty = Empty
-
-buildTree :: Int -> Stmt Untyped -> Reader Gamma Tree
-buildTree k = go
-    where
-        go :: Stmt Untyped -> Reader Gamma Tree
-        go = \case
-            Seq s1 s2 -> liftM2 (<>) (go s1) (go s2)
-            IfThenElse g t e -> Branch <$> annotatePredicate g <*> go t <*> go e
-            While g b -> go $ unroll k g b
-            Block vars b -> local ([(x, t) | VarDeclaration x t <- vars] ++) $ go b
-            Skip -> return $ End Skip
-            Assert p -> End . Assert <$> annotatePredicate p
-            Assume p -> End . Assume <$> annotatePredicate p
-            Assign x e -> End . Assign x <$> annotatePredicate e
-            AAssign x () i e -> do
-                arrayTy <- asks $ fromJust . lookup x
-                stmt <- AAssign x arrayTy <$> annotatePredicate i <*> annotatePredicate e
-                return $ End stmt
-
-        unroll :: Int -> Expr Untyped -> Stmt Untyped -> Stmt Untyped
-        unroll 0 g b = Assume $ OpNeg g
-        -- TODO: Make sure variables in blocks get unique names
-        unroll n g b = IfThenElse g (b `Seq` unroll (n - 1) g b) Skip
-
-annotatePredicate :: Predicate Untyped -> Reader Gamma (Predicate Typed)
-annotatePredicate = \case
-    Var name _ -> asks (Var name . fromJust . lookup name)
-    Parens inner -> Parens <$> annotatePredicate inner
-    ArrayElem arr index -> ArrayElem <$> annotatePredicate arr <*> annotatePredicate index
-    OpNeg rand -> OpNeg <$> annotatePredicate rand
-    BinopExpr binop l r -> BinopExpr binop <$> annotatePredicate l <*> annotatePredicate r
-    Forall name body -> Forall name <$> local ((name, PType PTInt) :) (annotatePredicate body)
-    Exists name body -> Exists name <$> local ((name, PType PTInt) :) (annotatePredicate body)
-    Cond cond then_ else_ -> liftM3 Cond
-        (annotatePredicate cond)
-        (annotatePredicate then_)
-        (annotatePredicate else_)
-    LitI n -> return $ LitI n
-    LitB b -> return $ LitB b
-    RepBy arr i v -> RepBy <$> annotatePredicate arr <*> annotatePredicate i <*> annotatePredicate v
-    SizeOf arr -> SizeOf <$> annotatePredicate arr
 
 infixl 3 |->
 (|->) :: String -> Expr a -> Expr a -> Expr a
@@ -144,10 +79,10 @@ fromExpr e = do
                 sort <- fromType ty
                 mkVar (fromJust $ lookup var varEnv) sort
             (LitI x)              -> mkInt x =<< mkIntSort
-            (LitB b)           -> mkBool b
+            (LitB b)              -> mkBool b
             -- LitNull               -> _
             -- (Dereference u)       -> _
-            (Parens e)            -> go env e
+            (Parens e')           -> go env e'
             (ArrayElem var index) -> join $ mkSelect <$> go env var <*> go env index
             (OpNeg expr)          -> mkNot =<< go env expr
             (BinopExpr op e1 e2)  -> do
@@ -178,7 +113,7 @@ fromExpr e = do
                 z3body <- go ((var, sym) : varEnv, arrEnv) b
                 sort <- mkIntSort
                 mkExists [] [sym] [sort] z3body
-            (SizeOf (Var name t)) -> mkVar (fromJust $ lookup name arrEnv) =<< mkIntSort
+            (SizeOf (Var name _)) -> mkVar (fromJust $ lookup name arrEnv) =<< mkIntSort
             (RepBy var i val)     -> join $ mkStore <$> go env var <*> go env i  <*> go env val
             (Cond g e1 e2)        -> join $ mkIte   <$> go env g   <*> go env e1 <*> go env e2
             _ -> error "Invalid expression type"
@@ -230,21 +165,21 @@ report :: Stats -> SE Bool
 report s = tell s >> return True
 
 verify :: Tree -> SE Bool
-verify t = asks pathLength >>= \case
+verify tree = asks pathLength >>= \case
     0 -> report pathTooLong
-    _ -> case t of
+    _ -> case tree of
         Empty -> report inspectedPath
         Next (Assume p) t -> do
-            evaluatedCondition <- eval p
+            evaluatedCondition <- evalSE p
             assume evaluatedCondition $ continue t
-        Next (Assert p) t -> eval p >>= checkValid >>= \case
+        Next (Assert p) t -> evalSE p >>= checkValid >>= \case
             True -> continue t
             False -> tell (violatedAssertion p) >> return False
         Next (Assign nm val) t -> do
-            val' <- eval val
+            val' <- evalSE val
             assign nm val' $ continue t
         Next (AAssign nm ann idx val) t -> do
-            repby <- liftM3 RepBy (eval $ Var nm ann) (eval idx) (eval val)
+            repby <- liftM3 RepBy (evalSE $ Var nm ann) (evalSE idx) (evalSE val)
             assign nm repby $ continue t
         Next Skip t -> continue t
         Branch g l r -> liftM2 (&&) (checkBranch g l) (checkBranch (OpNeg g) r)
@@ -273,7 +208,7 @@ verify t = asks pathLength >>= \case
 
         checkBranch :: Expr Typed -> Tree -> SE Bool
         checkBranch g t = do
-            evalG <- eval g
+            evalG <- evalSE g
             checkSatisfiability evalG >>= \case
                 Sat -> assume evalG $ continue t
                 Unsat -> report prunedPath
@@ -282,8 +217,8 @@ verify t = asks pathLength >>= \case
         substStateVar :: String -> Expr Typed -> SE (Expr Typed)
         substStateVar fv e = asks \s -> (fv |-> environment s M.! fv) e
 
-        eval :: Expr Typed -> SE (Expr Typed)
-        eval e = foldM (flip substStateVar) e [fv | (fv, _) <- freeVariables e]
+        evalSE :: Expr Typed -> SE (Expr Typed)
+        evalSE e = foldM (flip substStateVar) e [fv | (fv, _) <- freeVariables e]
 
 verifyProgram :: Int -> Int -> PruneHeuristic -> Program -> IO (Bool, Stats)
 verifyProgram k n ph Program{stmt, input, output} = do 

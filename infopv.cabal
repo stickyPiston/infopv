@@ -60,6 +60,7 @@ library parser
                      , ExamplesOfSemanticFunction
                      , Verifier.Checker
                      , Verifier.Stats
+                     , Verifier.Tree
   -- other-extensions:
   build-depends:       base   >= 4.10
                      , array
