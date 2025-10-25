@@ -4,26 +4,55 @@ import GCLParser.GCLDatatype
 import Data.Maybe (fromMaybe)
 import ExamplesOfSemanticFunction (freeVariables)
 
-simplify :: Eq a => Expr a -> Expr a
-simplify = simplifyAssignAssgns
-
 filterIrrelevantConstraints :: Expr Type -> [Expr Type] -> [Expr Type]
 filterIrrelevantConstraints for constraints =
     let fvFor = freeVariables for
      in filter (any (`elem` fvFor) . freeVariables) constraints
 
-simplifyAssignAssgns :: Eq a => Expr a -> Expr a
-simplifyAssignAssgns = \case
-    e@(ArrayElem a i) -> fromMaybe e $ checkSpine i a
-    OpNeg e -> OpNeg $ simplifyAssignAssgns e
-    BinopExpr op l r -> BinopExpr op (simplifyAssignAssgns l) (simplifyAssignAssgns r)
-    Forall x e -> Forall x $ simplifyAssignAssgns e
-    Exists x e -> Exists x $ simplifyAssignAssgns e
-    SizeOf a -> SizeOf $ simplifyAssignAssgns a
-    RepBy a i e -> RepBy (simplifyAssignAssgns a) (simplifyAssignAssgns i) (simplifyAssignAssgns e)
-    Cond i t e -> Cond (simplifyAssignAssgns i) (simplifyAssignAssgns t) (simplifyAssignAssgns e)
+simplify :: (Eq a, Show a) => Expr a -> Expr a
+simplify = \case
+    BinopExpr op l r -> case (simplify l, simplify r) of
+        (LitI a, LitI b) -> evalIntOp op a b
+        (LitB a, LitB b) -> evalBoolOp op a b
+        (cfL, cfR) -> BinopExpr op cfL cfR
+    OpNeg x -> case simplify x of
+        LitB b -> LitB $ not b
+        y -> OpNeg y
+    Cond i t e -> case simplify i of
+        LitB True -> simplify t
+        LitB False -> simplify e
+        c -> Cond c (simplify t) (simplify e)
+    Forall x e -> Forall x $ simplify e
+    Exists x e -> Exists x $ simplify e
+    SizeOf a -> SizeOf $ simplify a
+    RepBy a i e -> RepBy (simplify a) (simplify i) (simplify e)
+    ArrayElem a i -> fromMaybe (ArrayElem (simplify a) (simplify i))
+        $ checkSpine (simplify i) (simplify a)
+    Parens e -> case simplify e of
+        LitI i -> LitI i
+        LitB b -> LitB b
+        cfE -> Parens cfE
     e -> e
     where
+        evalIntOp :: BinOp -> Int -> Int -> Expr a
+        evalIntOp LessThan l r = LitB $ l < r
+        evalIntOp LessThanEqual l r = LitB $ l <= r
+        evalIntOp GreaterThan l r = LitB $ l > r
+        evalIntOp GreaterThanEqual l r = LitB $ l >= r
+        evalIntOp Equal l r = LitB $ l == r
+        evalIntOp Alias l r = LitB $ l == r
+        evalIntOp Plus l r = LitI $ l + r
+        evalIntOp Minus l r = LitI $ l - r
+        evalIntOp Multiply l r = LitI $ l * r
+        evalIntOp Divide l r = LitI $ l `div` r
+        evalIntOp op l r = error $ "Invalid instruction" <> show l <> " " <> show op <> " " <> show r
+
+        evalBoolOp :: BinOp -> Bool -> Bool -> Expr a
+        evalBoolOp And l r = LitB $ l && r
+        evalBoolOp Or l r = LitB $ l || r
+        evalBoolOp Implication l r = LitB $ not l || r
+        evalBoolOp op l r = error $ "Invalid instruction" <> show l <> " " <> show op <> " " <> show r
+
         checkSpine :: Eq a => Expr a -> Expr a -> Maybe (Expr a)
         checkSpine i (RepBy a i' e)
             | i == i' = Just e

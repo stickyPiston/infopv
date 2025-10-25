@@ -19,6 +19,7 @@ import qualified Data.Map as M
 import Verifier.Tree
 import Verifier.Stats
 import Verifier.Simplifier
+import Debug.Trace
 
 -- Environment for Expr to Z3 AST conversion
 type SymbolEnv = [(String, Z3.Symbol)]
@@ -173,6 +174,7 @@ verify tree = asks pathLength >>= \case
             assume evaluatedCondition $ continue t
         Next (Assert p) t -> do
             simpleP <- simplify <$> evalSE p
+            traceM $ "Checking validity of " <> show simpleP
             checkValid simpleP >>= \case
                 True -> continue t
                 False -> tell (violatedAssertion simpleP) >> return False

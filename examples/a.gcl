@@ -1,5 +1,4 @@
 A(a : []int, b : int | y : int) {
     a[10] := 10 ;
-    assume a[20] == y ;
-    assert a[10] == 10 
+    assert ~(a[10] = 10) || false
 }

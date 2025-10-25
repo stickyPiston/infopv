@@ -61,6 +61,7 @@ library parser
                      , Verifier.Checker
                      , Verifier.Stats
                      , Verifier.Tree
+                     , Verifier.Simplifier
   -- other-extensions:
   build-depends:       base   >= 4.10
                      , array
