@@ -220,10 +220,11 @@ verify tree = asks pathLength >>= \case
         evalSE :: Expr Typed -> SE (Expr Typed)
         evalSE e = foldM (flip substStateVar) e [fv | (fv, _) <- freeVariables e]
 
-verifyProgram :: Int -> Int -> PruneHeuristic -> Program -> IO (Bool, Stats)
-verifyProgram k n ph Program{stmt, input, output} = do 
+verifyProgram :: Int -> Int -> PruneHeuristic -> Bool -> Program -> IO (Bool, Stats)
+verifyProgram k n ph p Program{stmt, input, output} = do 
     let initialGamma = [(name, ty) | VarDeclaration name ty <- input ++ output]
     let compTree = runReader (buildTree k stmt) initialGamma
+    when p $ print compTree
     let initialRho = M.fromList [(name, Var (name ++ "_0") ty) | VarDeclaration name ty <- input ++ output]
     g <- initStdGen
     evalZ3 do

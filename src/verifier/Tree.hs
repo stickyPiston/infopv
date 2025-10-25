@@ -16,10 +16,12 @@ data Tree
     = Empty
     | Next (Stmt Typed) Tree
     | Branch (Expr Typed) Tree Tree
-    deriving (Show)
 
-end :: Stmt Typed -> Tree
-end s = Next s Empty
+instance Show Tree where
+    show = prettyTree
+
+pattern End :: Stmt Typed -> Tree
+pattern End s = Next s Empty
 
 instance Semigroup Tree where
     t <> Empty = t
@@ -39,14 +41,14 @@ buildTree k = go
             IfThenElse g t e -> Branch <$> annotatePredicate g <*> go t <*> go e
             While g b -> go $ unroll k g b
             Block vars b -> local ([(x, t) | VarDeclaration x t <- vars] ++) $ go b
-            Skip -> return $ end Skip
-            Assert p -> end . Assert <$> annotatePredicate p
-            Assume p -> end . Assume <$> annotatePredicate p
-            Assign x e -> end . Assign x <$> annotatePredicate e
+            Skip -> return $ End Skip
+            Assert p -> End . Assert <$> annotatePredicate p
+            Assume p -> End . Assume <$> annotatePredicate p
+            Assign x e -> End . Assign x <$> annotatePredicate e
             AAssign x () i e -> do
                 arrayTy <- asks $ fromJust . lookup x
                 stmt <- AAssign x arrayTy <$> annotatePredicate i <*> annotatePredicate e
-                return $ end stmt
+                return $ End stmt
 
         unroll :: Int -> Expr Untyped -> Stmt Untyped -> Stmt Untyped
         unroll 0 g _ = Assume $ OpNeg g
@@ -70,3 +72,18 @@ annotatePredicate = \case
     LitB b -> return $ LitB b
     RepBy arr i v -> RepBy <$> annotatePredicate arr <*> annotatePredicate i <*> annotatePredicate v
     SizeOf arr -> SizeOf <$> annotatePredicate arr
+
+prettyTree :: Tree -> String
+prettyTree = go "" True
+  where
+    go pfx isLast = \case
+        Empty           -> line pfx isLast ++ "∅"
+        End stmt        -> line pfx isLast ++ show stmt
+        Next stmt t     -> line pfx isLast ++ show stmt ++ "\n"
+            ++ go (next pfx isLast) True t
+        Branch expr l r -> line pfx isLast ++ "if " ++ show expr ++ "\n"
+            ++ go (next pfx isLast) False l ++ "\n"
+            ++ go (next pfx isLast) True r
+
+    line pfx isLast = pfx ++ (if isLast then "└── " else "├── ")
+    next pfx isLast = pfx ++ (if isLast then "    " else "│   ")
