@@ -4,6 +4,7 @@ import Control.Monad.Reader
 
 import GCLParser.GCLDatatype
 import Data.Maybe
+import Control.Monad.State
 
 type Typed = Type
 type Untyped = ()
@@ -18,7 +19,8 @@ data Tree
     | Branch (Expr Typed) Tree Tree
 
 instance Show Tree where
-    show = prettyTree
+    --show = prettyTree
+    show = toGraphviz
 
 pattern End :: Stmt Typed -> Tree
 pattern End s = Next s Empty
@@ -87,3 +89,25 @@ prettyTree = go "" True
 
     line pfx isLast = pfx ++ (if isLast then "└── " else "├── ")
     next pfx isLast = pfx ++ (if isLast then "    " else "│   ")
+
+toGraphviz :: Tree -> String
+toGraphviz tree =
+  "digraph Tree {\n" ++
+  "  node [shape=box, style=rounded];\n" ++
+  evalState (go tree) 0 ++ "}\n"
+  where
+    go :: Tree -> State Int String
+    go t = do
+        n <- state (\n -> (n, n + 1))
+        case t of
+            Empty           -> node "∅\", shape=\"plaintext\"" "gray" n
+            End stmt        -> node (show stmt) "green" n
+            Next stmt c     -> gets ((\e1 n1 n2 -> n1 ++ e1 ++ n2) . edge n) <*> node (show stmt) "orange" n <*> go c
+            Branch expr l r -> 
+                gets ((\el n1 nl er nr -> n1 ++ el ++ nl ++ er ++ nr) . edge n) <*> node ("if " ++ show expr) "red" n <*> go l <*> gets (edge n) <*> go r
+    
+    node :: String -> String -> Int -> State Int String
+    node label color n = return $ "  n" ++ show n ++ " [label=\"" ++ label ++ "\", color=\"" ++ color ++ "\"];\n"
+    
+    edge :: Int -> Int -> String
+    edge f t = "  n" ++ show f ++ " -> n" ++ show t ++ ";\n"
