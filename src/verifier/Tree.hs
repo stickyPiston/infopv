@@ -99,14 +99,14 @@ toGraphviz tree =
         case t of
             Empty           -> node "∅\", shape=\"plaintext\"" "gray" n
             End stmt        -> node (show stmt) "green" n
-            Next stmt c     -> gets ((\e1 n1 n2 -> n1 ++ e1 ++ n2) . edge n) <*> node (show stmt) "orange" n <*> go c
-            Branch expr l r -> 
-                gets ((\el n1 nl er nr -> n1 ++ el ++ nl ++ er ++ nr) . edge n) <*> node ("if " ++ show expr) "red" n <*> go l <*> gets (edge n) <*> go r
-            TWhile g b t -> 
-                gets ((\el n1 nl er nr -> n1 ++ el ++ nl ++ er ++ nr) . edge n) <*> node ("while " ++ show g) "red" n <*> go b <*> gets (edge n) <*> go t
+            Next stmt c     -> (\n1 e1 n2 -> n1 ++ e1 ++ n2) <$> node (show stmt) "orange" n <*> edge n <*> go c
+            Branch g l r    -> (\n1 el nl er nr -> concat [n1, el, nl, er, nr])
+                <$> node ("if "    ++ show g) "red" n <*> edge n <*> go l <*> edge n <*> go r
+            TWhile g l r    -> (\n1 el nl er nr -> n1 ++ el ++ nl ++ er ++ nr)
+                <$> node ("while " ++ show g) "red" n <*> edge n <*> go l <*> edge n <*> go r
     
     node :: String -> String -> Int -> State Int String
     node label color n = return $ "  n" ++ show n ++ " [label=\"" ++ label ++ "\", color=\"" ++ color ++ "\"];\n"
     
-    edge :: Int -> Int -> String
-    edge f t = "  n" ++ show f ++ " -> n" ++ show t ++ ";\n"
+    edge :: Int -> State Int String
+    edge f = gets (\t -> "  n" ++ show f ++ " -> n" ++ show t ++ ";\n")
