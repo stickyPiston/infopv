@@ -9,11 +9,20 @@ filterIrrelevantConstraints for constraints =
     let fvFor = freeVariables for
      in filter (any (`elem` fvFor) . freeVariables) constraints
 
-simplify :: (Eq a, Show a) => Expr a -> Expr a
+simplify :: Eq a => Expr a -> Expr a
 simplify = \case
     BinopExpr op l r -> case (simplify l, simplify r) of
         (LitI a, LitI b) -> evalIntOp op a b
-        (LitB a, LitB b) -> evalBoolOp op a b
+        (LitB a, b) -> case op of
+            And -> if a then b else LitB a
+            Or -> if a then LitB a else b
+            Implication -> if a then b else LitB True
+            _ -> error "Boolean argument passed to non-boolean operator"
+        (a, LitB b) -> case op of
+            And -> if b then a else LitB b
+            Or -> if b then LitB b else a
+            Implication -> if b then LitB b else OpNeg a
+            _ -> error "Boolean argument passed to non-boolean operator"
         (cfL, cfR) -> BinopExpr op cfL cfR
     OpNeg x -> case simplify x of
         LitB b -> LitB $ not b
@@ -46,12 +55,6 @@ simplify = \case
         evalIntOp Multiply l r = LitI $ l * r
         evalIntOp Divide l r = LitI $ l `div` r
         evalIntOp op l r = error $ "Invalid instruction" <> show l <> " " <> show op <> " " <> show r
-
-        evalBoolOp :: BinOp -> Bool -> Bool -> Expr a
-        evalBoolOp And l r = LitB $ l && r
-        evalBoolOp Or l r = LitB $ l || r
-        evalBoolOp Implication l r = LitB $ not l || r
-        evalBoolOp op l r = error $ "Invalid instruction" <> show l <> " " <> show op <> " " <> show r
 
         checkSpine :: Eq a => Expr a -> Expr a -> Maybe (Expr a)
         checkSpine i (RepBy a i' e)

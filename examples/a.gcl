@@ -1,4 +1,4 @@
 A(a : []int, b : int | y : int) {
     a[10] := 10 ;
-    assert ~(a[10] = 10) || false
+    assert a[1] < a[2] && (a[10] = 10) && a[3] < a[4] && a[4] < a[5]
 }
