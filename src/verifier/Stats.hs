@@ -23,9 +23,10 @@ instance Show Stats where
         , "\tPruned paths:               " ++ show p
         , "\tPaths too long:             " ++ show l
         , "\tTotal checked formula size: " ++ show f
-        , "Violated assertions:"
         ]
-        ++ map show (S.toList va)
+        ++ if not (null va)
+            then "Violated assertions:" : map show (S.toList va)
+            else []
 
 instance Semigroup Stats where
     Stats i1 p1 l1 va1 f1 <> Stats i2 p2 l2 va2 f2 = Stats (i1 + i2) (p1 + p2) (l1 + l2) (va1 <> va2) (f1 + f2)

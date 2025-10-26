@@ -230,12 +230,13 @@ verify tree = asks pathLength >>= \case
             assign nm repby $ continue t
         Next Skip t -> continue t
         Branch g l r -> liftM2 (&&) (checkBranch g l) (checkBranch (OpNeg g) r)
+        TWhile g b t -> verify $ Branch g (b <> TWhile g b t) t
         _ -> error "Invalid tree node"
 
-verifyProgram :: Int -> Int -> PruneHeuristic -> Bool -> Bool -> Program -> IO (Bool, Stats)
-verifyProgram k n ph p se Program{stmt, input, output} = do 
+verifyProgram :: Int -> PruneHeuristic -> Bool -> Bool -> Program -> IO (Bool, Stats)
+verifyProgram n ph p se Program{stmt, input, output} = do 
     let initialGamma = [(name, ty) | VarDeclaration name ty <- input ++ output]
-    let compTree = runReader (buildTree k stmt) initialGamma
+    let compTree = runReader (buildTree stmt) initialGamma
     when p $ print compTree
     let initialRho = M.fromList [(name, Var (name ++ "_0") ty) | VarDeclaration name ty <- input ++ output]
     g <- initStdGen
@@ -244,7 +245,7 @@ verifyProgram k n ph p se Program{stmt, input, output} = do
                 { environment = initialRho
                 , pathLength = n
                 , constraints = []
-                , maxLength = k
+                , maxLength = n
                 , pruneHeuristic = ph
                 , simplifyEnabled = se
                 }

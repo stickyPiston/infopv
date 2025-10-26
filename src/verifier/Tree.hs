@@ -17,9 +17,10 @@ data Tree
     = Empty
     | Next (Stmt Typed) Tree
     | Branch (Expr Typed) Tree Tree
+    | TWhile (Expr Typed) Tree Tree
 
 instance Show Tree where
-    --show = prettyTree
+    -- show = prettyTree
     show = toGraphviz
 
 pattern End :: Stmt Typed -> Tree
@@ -30,32 +31,25 @@ instance Semigroup Tree where
     Empty <> t = t
     Next s1 t1 <> t2 = Next s1 (t1 <> t2)
     Branch g t1 t2 <> t3 = Branch g (t1 <> t3) (t2 <> t3)
+    TWhile g b n <> t = TWhile g b (n <> t)
 
 instance Monoid Tree where
     mempty = Empty
 
-buildTree :: Int -> Stmt Untyped -> Reader Gamma Tree
-buildTree k = go
-    where
-        go :: Stmt Untyped -> Reader Gamma Tree
-        go = \case
-            Seq s1 s2 -> liftM2 (<>) (go s1) (go s2)
-            IfThenElse g t e -> Branch <$> annotatePredicate g <*> go t <*> go e
-            While g b -> go $ unroll k g b
-            Block vars b -> local ([(x, t) | VarDeclaration x t <- vars] ++) $ go b
-            Skip -> return $ End Skip
-            Assert p -> End . Assert <$> annotatePredicate p
-            Assume p -> End . Assume <$> annotatePredicate p
-            Assign x e -> End . Assign x <$> annotatePredicate e
-            AAssign x () i e -> do
-                arrayTy <- asks $ fromJust . lookup x
-                stmt <- AAssign x arrayTy <$> annotatePredicate i <*> annotatePredicate e
-                return $ End stmt
-
-        unroll :: Int -> Expr Untyped -> Stmt Untyped -> Stmt Untyped
-        unroll 0 g _ = Assume $ OpNeg g
-        -- TODO: Make sure variables in blocks get unique names
-        unroll n g b = IfThenElse g (b `Seq` unroll (n - 1) g b) Skip
+buildTree :: Stmt Untyped -> Reader Gamma Tree
+buildTree = \case
+    Seq s1 s2 -> liftM2 (<>) (buildTree s1) (buildTree s2)
+    IfThenElse g t e -> Branch <$> annotatePredicate g <*> buildTree t <*> buildTree e
+    While g b -> TWhile <$> annotatePredicate g <*> buildTree b <*> pure Empty
+    Block vars b -> local ([(x, t) | VarDeclaration x t <- vars] ++) $ buildTree b
+    Skip -> return $ End Skip
+    Assert p -> End . Assert <$> annotatePredicate p
+    Assume p -> End . Assume <$> annotatePredicate p
+    Assign x e -> End . Assign x <$> annotatePredicate e
+    AAssign x () i e -> do
+        arrayTy <- asks $ fromJust . lookup x
+        stmt <- AAssign x arrayTy <$> annotatePredicate i <*> annotatePredicate e
+        return $ End stmt
 
 annotatePredicate :: Predicate Untyped -> Reader Gamma (Predicate Typed)
 annotatePredicate = \case
@@ -86,9 +80,12 @@ prettyTree = go "" True
         Branch expr l r -> line pfx isLast ++ "if " ++ show expr ++ "\n"
             ++ go (next pfx isLast) False l ++ "\n"
             ++ go (next pfx isLast) True r
+        TWhile g b t -> line pfx isLast ++ "while " ++ show g ++ "\n"
+            ++ go (next pfx isLast) False b ++ "\n"
+            ++ go (next pfx isLast) True t
 
-    line pfx isLast = pfx ++ (if isLast then "└── " else "├── ")
-    next pfx isLast = pfx ++ (if isLast then "    " else "│   ")
+    line pfx isLast = pfx ++ if isLast then "└── " else "├── "
+    next pfx isLast = pfx ++ if isLast then "    " else "│   "
 
 toGraphviz :: Tree -> String
 toGraphviz tree =
@@ -105,6 +102,8 @@ toGraphviz tree =
             Next stmt c     -> gets ((\e1 n1 n2 -> n1 ++ e1 ++ n2) . edge n) <*> node (show stmt) "orange" n <*> go c
             Branch expr l r -> 
                 gets ((\el n1 nl er nr -> n1 ++ el ++ nl ++ er ++ nr) . edge n) <*> node ("if " ++ show expr) "red" n <*> go l <*> gets (edge n) <*> go r
+            TWhile g b t -> 
+                gets ((\el n1 nl er nr -> n1 ++ el ++ nl ++ er ++ nr) . edge n) <*> node ("while " ++ show g) "red" n <*> go b <*> gets (edge n) <*> go t
     
     node :: String -> String -> Int -> State Int String
     node label color n = return $ "  n" ++ show n ++ " [label=\"" ++ label ++ "\", color=\"" ++ color ++ "\"];\n"

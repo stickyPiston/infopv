@@ -1,7 +1,14 @@
 A(a : []int, b : int | y : int) {
-    a[10] := 10 ;
-    a[20] := 20 ;
-    a[30] := 30 ;
-    a[40] := 40 ;
-    assert a[1] < a[2] && ~(a[10] = 10) && a[3] < a[4] && a[4] < a[5] && a[b] > 10
+    y := -1 ;
+    var i : int {
+        i := 0 ;
+        while i < #a && y = -1 do {
+            if a[i] = b then {
+                y := i
+            } else {
+                i := i + 1
+            }
+        }
+    } ;
+    assert y = -1 || a[y] = b
 }
