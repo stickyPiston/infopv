@@ -149,6 +149,7 @@ runSE :: SE a -> SymbolicState -> StdGen -> Z3 (a, Stats)
 runSE = evalRWST
 
 assume :: Expr Typed -> SE a -> SE a
+assume (LitB _) = id
 assume p = local (\s -> s { constraints = simplify p : constraints s })
 
 randomRange :: Int -> Int -> SE Int
