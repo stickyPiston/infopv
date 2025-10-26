@@ -97,6 +97,21 @@ data Expr ann
     -- | Dereference        String
     deriving (Eq, Ord, Generic, NFData) 
 
+size :: Expr a -> Int
+size = \case
+    Var _ _ -> 1
+    LitI _ -> 1
+    LitB _ -> 1
+    Parens e -> size e
+    ArrayElem a i -> size a + size i
+    OpNeg e -> size e
+    BinopExpr _ l r -> size l + size r
+    Forall _ e -> size e
+    Exists _ e -> size e
+    SizeOf a -> size a
+    RepBy a i e -> size a + size i + size e
+    Cond i t e -> size i + size t + size e
+
 data BinOp = And | Or | Implication 
     | LessThan | LessThanEqual | GreaterThan | GreaterThanEqual | Equal
     | Minus | Plus | Multiply | Divide

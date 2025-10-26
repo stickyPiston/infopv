@@ -20,6 +20,7 @@ import Verifier.Tree
 import Verifier.Stats
 import Verifier.Simplifier
 import Debug.Trace
+import Data.Functor
 
 -- Environment for Expr to Z3 AST conversion
 type SymbolEnv = [(String, Z3.Symbol)]
@@ -193,19 +194,23 @@ verify tree = asks pathLength >>= \case
         continue t = local (\s -> s { pathLength = pathLength s - 1 }) $ verify t
 
         checkValid :: Expr Typed -> SE Bool
-        checkValid (LitB x) = return x
+        checkValid (LitB x) = tell (checkedFormula (LitB x)) $> x
         checkValid p = Z3.local do
             relevantConstraints <- asks (filterIrrelevantConstraints p . constraints) >>= mapM fromExpr' >>= mkAnd
             z3Predicate <- fromExpr' p
+            tell (checkedFormula p)
             (relevantConstraints `mkImplies` z3Predicate) >>= mkNot >>= assert >> (Unsat ==) <$> check
 
         prune :: Expr Typed -> SE Z3.Result
         prune p = Z3.local do
             relevantConstraints <- asks (filterIrrelevantConstraints p . constraints) >>= mapM fromExpr'
+            tell (checkedFormula p)
             fromExpr' p >>= mkAnd . (: relevantConstraints) >>= assert >> check
 
         checkSatisfiability :: Expr Typed -> SE Z3.Result
-        checkSatisfiability (LitB x) = return if x then Sat else Unsat
+        checkSatisfiability (LitB x) = do
+            tell (checkedFormula $ LitB x)
+            return if x then Sat else Unsat
         checkSatisfiability p = asks pruneHeuristic >>= \case
             Full -> prune p
             None -> return Sat
