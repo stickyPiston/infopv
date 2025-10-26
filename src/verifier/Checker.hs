@@ -174,13 +174,13 @@ checkValid (LitB x) = tell (checkedFormula (LitB x)) $> x
 checkValid p = Z3.local do
     relevantConstraints <- asks (filterIrrelevantConstraints p . constraints) >>= mapM fromExpr' >>= mkAnd
     z3Predicate <- fromExpr' p
-    tell (checkedFormula p)
+    tell $ checkedFormula p <> z3Invocation
     (relevantConstraints `mkImplies` z3Predicate) >>= mkNot >>= assert >> (Unsat ==) <$> check
 
 prune :: Expr Typed -> SE Z3.Result
 prune p = Z3.local do
     relevantConstraints <- asks (filterIrrelevantConstraints p . constraints) >>= mapM fromExpr'
-    tell (checkedFormula p)
+    tell $ checkedFormula p <> z3Invocation
     fromExpr' p >>= mkAnd . (: relevantConstraints) >>= assert >> check
 
 checkSatisfiability :: Expr Typed -> SE Z3.Result
