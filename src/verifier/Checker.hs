@@ -3,7 +3,7 @@ module Verifier.Checker where
 
 import GCLParser.GCLDatatype
 
-import Z3.Monad as Z3 hiding (local, simplify)
+import Z3.Monad as Z3 hiding (local, simplify, eval)
 import qualified Z3.Monad as Z3
 import Control.Monad
 import ExamplesOfSemanticFunction
@@ -12,14 +12,13 @@ import Control.Monad.Reader
 import Control.Monad.Writer
 import Control.Monad.State
 import Control.Monad.RWS
-import System.Random.Stateful
+import System.Random
 
 import qualified Data.Map as M
 
 import Verifier.Tree
 import Verifier.Stats
 import Verifier.Simplifier
-import Debug.Trace
 import Data.Functor
 
 -- Environment for Expr to Z3 AST conversion
@@ -132,11 +131,12 @@ data PruneHeuristic
     deriving (Show, Read)
 
 data SymbolicState = SymbolicState
-    { environment    :: M.Map String (Expr Typed)
-    , constraints    :: [Expr Typed]
-    , pathLength     :: Int
-    , maxLength      :: Int
-    , pruneHeuristic :: PruneHeuristic
+    { environment     :: M.Map String (Expr Typed)
+    , constraints     :: [Expr Typed]
+    , pathLength      :: Int
+    , maxLength       :: Int
+    , pruneHeuristic  :: PruneHeuristic
+    , simplifyEnabled :: Bool
     }
 
 -- | The Symbolic Eval (SE) monad
@@ -166,80 +166,86 @@ assign nm val = local \s -> s { environment = M.insert nm val $ environment s }
 report :: Stats -> SE Bool
 report s = tell s >> return True
 
+failWith :: Stats -> SE Bool
+failWith s = tell s >> return False
+
+checkValid :: Expr Typed -> SE Bool
+checkValid (LitB x) = tell (checkedFormula (LitB x)) $> x
+checkValid p = Z3.local do
+    relevantConstraints <- asks (filterIrrelevantConstraints p . constraints) >>= mapM fromExpr' >>= mkAnd
+    z3Predicate <- fromExpr' p
+    tell (checkedFormula p)
+    (relevantConstraints `mkImplies` z3Predicate) >>= mkNot >>= assert >> (Unsat ==) <$> check
+
+prune :: Expr Typed -> SE Z3.Result
+prune p = Z3.local do
+    relevantConstraints <- asks (filterIrrelevantConstraints p . constraints) >>= mapM fromExpr'
+    tell (checkedFormula p)
+    fromExpr' p >>= mkAnd . (: relevantConstraints) >>= assert >> check
+
+checkSatisfiability :: Expr Typed -> SE Z3.Result
+checkSatisfiability (LitB x) = do
+    tell (checkedFormula $ LitB x)
+    return if x then Sat else Unsat
+checkSatisfiability p = asks pruneHeuristic >>= \case
+    Full -> prune p
+    None -> return Sat
+    LengthBased -> do
+        r <- asks maxLength >>= randomRange 0
+        l <- asks pathLength
+        if r < l then prune p else return Sat
+
+checkBranch :: Expr Typed -> Tree -> SE Bool
+checkBranch g t = do
+    evalG <- eval g
+    checkSatisfiability evalG >>= \case
+        Sat -> assume evalG $ continue t
+        Unsat -> report prunedPath
+        Undef -> error "Undefined SE Result"
+
+eval :: Expr Typed -> SE (Expr Typed)
+eval e = asks \s ->
+    let substExpr = foldr (\fv -> fv |-> environment s M.! fv) e [fv | (fv, _) <- freeVariables e]
+     in if simplifyEnabled s then simplify substExpr else substExpr
+
+continue :: Tree -> SE Bool
+continue t = local (\s -> s { pathLength = pathLength s - 1 }) $ verify t
+
 verify :: Tree -> SE Bool
 verify tree = asks pathLength >>= \case
     0 -> report pathTooLong
     _ -> case tree of
         Empty -> report inspectedPath
         Next (Assume p) t -> do
-            evaluatedCondition <- evalSE p
+            evaluatedCondition <- eval p
             assume evaluatedCondition $ continue t
-        Next (Assert p) t -> do
-            simpleP <- simplify <$> evalSE p
-            traceM $ "Checking validity of " <> show simpleP
-            checkValid simpleP >>= \case
-                True -> continue t
-                False -> tell (violatedAssertion simpleP) >> return False
+        Next (Assert p) t -> eval p >>= checkValid >>= \case
+            True -> continue t
+            False -> failWith $ violatedAssertion p
         Next (Assign nm val) t -> do
-            val' <- evalSE val
+            val' <- eval val
             assign nm val' $ continue t
         Next (AAssign nm ann idx val) t -> do
-            repby <- liftM3 RepBy (evalSE $ Var nm ann) (evalSE idx) (evalSE val)
+            repby <- liftM3 RepBy (eval $ Var nm ann) (eval idx) (eval val)
             assign nm repby $ continue t
         Next Skip t -> continue t
         Branch g l r -> liftM2 (&&) (checkBranch g l) (checkBranch (OpNeg g) r)
-        _ -> error "Invalid statement in tree"
-    where
-        continue :: Tree -> SE Bool
-        continue t = local (\s -> s { pathLength = pathLength s - 1 }) $ verify t
+        _ -> error "Invalid tree node"
 
-        checkValid :: Expr Typed -> SE Bool
-        checkValid (LitB x) = tell (checkedFormula (LitB x)) $> x
-        checkValid p = Z3.local do
-            relevantConstraints <- asks (filterIrrelevantConstraints p . constraints) >>= mapM fromExpr' >>= mkAnd
-            z3Predicate <- fromExpr' p
-            tell (checkedFormula p)
-            (relevantConstraints `mkImplies` z3Predicate) >>= mkNot >>= assert >> (Unsat ==) <$> check
-
-        prune :: Expr Typed -> SE Z3.Result
-        prune p = Z3.local do
-            relevantConstraints <- asks (filterIrrelevantConstraints p . constraints) >>= mapM fromExpr'
-            tell (checkedFormula p)
-            fromExpr' p >>= mkAnd . (: relevantConstraints) >>= assert >> check
-
-        checkSatisfiability :: Expr Typed -> SE Z3.Result
-        checkSatisfiability (LitB x) = do
-            tell (checkedFormula $ LitB x)
-            return if x then Sat else Unsat
-        checkSatisfiability p = asks pruneHeuristic >>= \case
-            Full -> prune p
-            None -> return Sat
-            LengthBased -> do
-                r <- asks maxLength >>= randomRange 0
-                l <- asks pathLength
-                if r < l then prune p else return Sat
-
-        checkBranch :: Expr Typed -> Tree -> SE Bool
-        checkBranch g t = do
-            evalG <- evalSE g
-            checkSatisfiability evalG >>= \case
-                Sat -> assume evalG $ continue t
-                Unsat -> report prunedPath
-                Undef -> error "Undefined SE Result"
-
-        substStateVar :: String -> Expr Typed -> SE (Expr Typed)
-        substStateVar fv e = asks \s -> (fv |-> environment s M.! fv) e
-
-        evalSE :: Expr Typed -> SE (Expr Typed)
-        evalSE e = foldM (flip substStateVar) e [fv | (fv, _) <- freeVariables e]
-
-verifyProgram :: Int -> Int -> PruneHeuristic -> Bool -> Program -> IO (Bool, Stats)
-verifyProgram k n ph p Program{stmt, input, output} = do 
+verifyProgram :: Int -> Int -> PruneHeuristic -> Bool -> Bool -> Program -> IO (Bool, Stats)
+verifyProgram k n ph p se Program{stmt, input, output} = do 
     let initialGamma = [(name, ty) | VarDeclaration name ty <- input ++ output]
     let compTree = runReader (buildTree k stmt) initialGamma
     when p $ print compTree
     let initialRho = M.fromList [(name, Var (name ++ "_0") ty) | VarDeclaration name ty <- input ++ output]
     g <- initStdGen
-    evalZ3 do
-        let initialSymbolicState = SymbolicState { environment = initialRho, pathLength = n, constraints = [], maxLength = k, pruneHeuristic = ph }
-        runSE (verify compTree) initialSymbolicState g
+    evalZ3
+        let initialSymbolicState = SymbolicState
+                { environment = initialRho
+                , pathLength = n
+                , constraints = []
+                , maxLength = k
+                , pruneHeuristic = ph
+                , simplifyEnabled = se
+                }
+         in runSE (verify compTree) initialSymbolicState g

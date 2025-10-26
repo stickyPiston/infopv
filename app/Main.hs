@@ -20,6 +20,7 @@ data Config = Config
     , n :: Int
     , ph :: PruneHeuristic
     , p :: Bool
+    , se :: Bool
     , filepath :: String
     }
 
@@ -29,6 +30,7 @@ configParser = info parser fullDesc
         parser = Config
             <$> option auto
                 ( long "k"
+                <> short 'k'
                 <> help "The number of times a while loop is unrolled"
                 <> showDefault
                 <> value 10
@@ -36,6 +38,7 @@ configParser = info parser fullDesc
                 )
             <*> option auto
                 ( long "n"
+                <> short 'n'
                 <> help "The maximum length of a pth"
                 <> showDefault
                 <> value 100
@@ -48,22 +51,24 @@ configParser = info parser fullDesc
                 <> value LengthBased
                 <> metavar "HEURISTIC"
                 )
-            <*> option auto
-                ( long "p"
-                <> help "Print Computation Tree"
-                <> showDefault
-                <> value True
-                <> metavar "BOOL"
+            <*> switch
+                ( long "print-tree"
+                <> short 'p'
+                <> help "Print computation tree"
                 )
+            <*> (not <$> switch
+                ( long "no-simplify"
+                <> help "Flag to disable simplification"
+                ))
             <*> argument str (metavar "FILE")
 
 main :: IO ()
 main = do
     setLocaleEncoding utf8
-    Config { k, n, ph, p, filepath } <- execParser configParser
+    Config { k, n, ph, p, se, filepath } <- execParser configParser
     parseGCLfile filepath >>= \case
         Left err -> putStrLn $ "Could not parse " <> filepath <> ": " <> err
         Right program -> do
-            (valid, stats) <- verifyProgram k n ph p program
+            (valid, stats) <- verifyProgram k n ph p se program
             print stats
             putStrLn if valid then "Program valid" else "Program invalid"
