@@ -20,6 +20,7 @@ import Verifier.Tree
 import Verifier.Stats
 import Verifier.Simplifier
 import Data.Functor
+import Debug.Trace
 
 -- Environment for Expr to Z3 AST conversion
 type SymbolEnv = [(String, Z3.Symbol)]
@@ -116,10 +117,11 @@ fromExpr e = do
                 z3body <- go ((var, sym) : varEnv, arrEnv) b
                 sort <- mkIntSort
                 mkExists [] [sym] [sort] z3body
+            (SizeOf (RepBy name _ _)) -> go env (SizeOf name)
             (SizeOf (Var name _)) -> mkVar (fromJust $ lookup name arrEnv) =<< mkIntSort
             (RepBy var i val)     -> join $ mkStore <$> go env var <*> go env i  <*> go env val
             (Cond g e1 e2)        -> join $ mkIte   <$> go env g   <*> go env e1 <*> go env e2
-            _ -> error "Invalid expression type"
+            e' -> error $ "Invalid expression type: " <> show e'
 
 fromExpr' :: Expr Typed -> SE Z3.AST
 fromExpr' = lift . fromExpr
