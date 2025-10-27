@@ -243,7 +243,7 @@ data VerifyConfig = VerifyConfig
 verifyProgram :: VerifyConfig -> Program -> IO (Bool, Stats)
 verifyProgram VerifyConfig{n, ph, p, se} Program{stmt, input, output} = do 
     let initialGamma = [(name, ty) | VarDeclaration name ty <- input ++ output]
-    let compTree = runReader (buildTree stmt) (BuildEnv initialGamma Nothing)
+    let compTree = runReader (buildTree stmt) initialGamma
     when p $ print compTree
     let initialRho = M.fromList [(name, Var (name ++ "_0") ty) | VarDeclaration name ty <- input ++ output]
     g <- initStdGen

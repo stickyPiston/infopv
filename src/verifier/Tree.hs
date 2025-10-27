@@ -11,10 +11,7 @@ type Untyped = ()
 type Predicate = Expr
 
 -- Environment for tree building
-data BuildEnv = BuildEnv
-    { gamma :: [(String, Type)]
-    , handler :: Maybe Tree
-    }
+type Gamma = [(String, Type)]
 
 data Tree
     = Empty
@@ -39,13 +36,10 @@ instance Semigroup Tree where
 instance Monoid Tree where
     mempty = Empty
 
-withHandler :: Tree -> Reader BuildEnv a -> Reader BuildEnv a
-withHandler h = local \s -> s { handler = Just h }
+withVariables :: [(String, Type)] -> Reader Gamma a -> Reader Gamma a
+withVariables g = local (g ++)
 
-withVariables :: [(String, Type)] -> Reader BuildEnv a -> Reader BuildEnv a
-withVariables g = local \s -> s { gamma = g ++ gamma s }
-
-buildTree :: Stmt Untyped -> Reader BuildEnv Tree
+buildTree :: Stmt Untyped -> Reader Gamma Tree
 buildTree = \case
     Seq s1 s2 -> liftM2 (<>) (buildTree s1) (buildTree s2)
     IfThenElse g t e -> Branch False <$> annotatePredicate g <*> buildTree t <*> buildTree e
@@ -56,7 +50,7 @@ buildTree = \case
     Assume p -> End . Assume <$> annotatePredicate p
     Assign x e -> End . Assign x <$> annotatePredicate e
     AAssign x () i e -> do
-        arrayTy <- asks $ fromJust . lookup x . gamma
+        arrayTy <- asks $ fromJust . lookup x
         stmt <- AAssign x arrayTy <$> annotatePredicate i <*> annotatePredicate e
         return $ End stmt
     TryCatch e try catch -> do
@@ -99,9 +93,9 @@ throwingCondition = \case
     Cond i t e -> throwingCondition i <> throwingCondition t <> throwingCondition e
     _ -> []
 
-annotatePredicate :: Predicate Untyped -> Reader BuildEnv (Predicate Typed)
+annotatePredicate :: Predicate Untyped -> Reader Gamma (Predicate Typed)
 annotatePredicate = \case
-    Var name _ -> asks (Var name . fromJust . lookup name . gamma)
+    Var name _ -> asks (Var name . fromJust . lookup name)
     Parens inner -> Parens <$> annotatePredicate inner
     ArrayElem arr index -> ArrayElem <$> annotatePredicate arr <*> annotatePredicate index
     OpNeg rand -> OpNeg <$> annotatePredicate rand
