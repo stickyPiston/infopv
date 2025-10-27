@@ -2,25 +2,23 @@
 module Verifier.Checker where
 
 import GCLParser.GCLDatatype
-
-import Z3.Monad as Z3 hiding (local, simplify, eval)
-import qualified Z3.Monad as Z3
-import Control.Monad
 import ExamplesOfSemanticFunction
-import Data.Maybe
-import Control.Monad.Reader
-import Control.Monad.Writer
-import Control.Monad.State
+
+import Verifier.Tree
+import Verifier.Simplifier
+import Verifier.Stats
+
+import Control.Monad
 import Control.Monad.RWS
+import Control.Monad.Reader
+import Data.Maybe
+import Data.Functor
 import System.Random
 
 import qualified Data.Map as M
 
-import Verifier.Tree
-import Verifier.Stats
-import Verifier.Simplifier
-import Data.Functor
-import Debug.Trace
+import Z3.Monad as Z3 hiding (local, simplify, eval)
+import qualified Z3.Monad as Z3
 
 -- Environment for Expr to Z3 AST conversion
 type SymbolEnv = [(String, Z3.Symbol)]
@@ -130,7 +128,7 @@ data PruneHeuristic
     = None
     | Full
     | LengthBased
-    deriving (Show, Read)
+    deriving (Show, Read, Enum, Bounded)
 
 data SymbolicState = SymbolicState
     { environment     :: M.Map String (Expr Typed)
@@ -235,8 +233,15 @@ verify tree = asks pathLength >>= \case
         TWhile g b t -> verify $ Branch g (b <> TWhile g b t) t
         _ -> error "Invalid tree node"
 
-verifyProgram :: Int -> PruneHeuristic -> Bool -> Bool -> Program -> IO (Bool, Stats)
-verifyProgram n ph p se Program{stmt, input, output} = do 
+data VerifyConfig = VerifyConfig
+    { n    :: Int
+    , ph   :: PruneHeuristic
+    , p    :: Bool
+    , se   :: Bool
+    }
+
+verifyProgram :: VerifyConfig -> Program -> IO (Bool, Stats)
+verifyProgram VerifyConfig{n, ph, p, se} Program{stmt, input, output} = do 
     let initialGamma = [(name, ty) | VarDeclaration name ty <- input ++ output]
     let compTree = runReader (buildTree stmt) initialGamma
     when p $ print compTree

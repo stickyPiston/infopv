@@ -46,6 +46,8 @@ benchmark verifier-bench
                    , random
   default-language: Haskell2010
   default-extensions: BangPatterns
+                    , BlockArguments
+                    , TupleSections
   ghc-options: -O2
 
 library parser

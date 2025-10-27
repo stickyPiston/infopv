@@ -1,10 +1,10 @@
 module Verifier.Tree where
 
-import Control.Monad.Reader
-
 import GCLParser.GCLDatatype
-import Data.Maybe
+
+import Control.Monad.Reader
 import Control.Monad.State
+import Data.Maybe
 
 type Typed = Type
 type Untyped = ()

@@ -2,6 +2,7 @@ module Main where
 
 import GCLUtils
 import GCLParser.GCLDatatype
+
 import Verifier.Checker
 
 import Options.Applicative
@@ -48,10 +49,10 @@ configParser = info parser fullDesc
 main :: IO ()
 main = do
     setLocaleEncoding utf8
-    Config { n, ph, p, se, filepath } <- execParser configParser
+    (Config n ph p se filepath) <- execParser configParser
     parseGCLfile filepath >>= \case
         Left err -> putStrLn $ "Could not parse " <> filepath <> ": " <> err
         Right program -> do
-            (valid, stats) <- verifyProgram n ph p se program
+            (valid, stats) <- verifyProgram (VerifyConfig n ph p se) program
             print stats
             putStrLn if valid then "Program valid" else "Program invalid"
