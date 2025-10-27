@@ -135,7 +135,7 @@ PStatement  :: { Stmt () }
              | if PExpr then copen PStatements cclose else copen PStatements cclose { IfThenElse $2 $5 $9 }
              | while PExpr do copen PStatements cclose                { While $2 $5 }
              | var PVarDeclarations copen PStatements cclose          { Block $2 $4 }
-            --  | try copen PStatement cclose catch popen identifier pclose copen PStatement cclose { TryCatch $7 $3 $10 }
+             | try copen PStatements cclose catch popen identifier pclose copen PStatements cclose { TryCatch $7 $3 $10 }
              | identifier sopen PExpr sclose assign PExpr             { AAssign $1 () $3 $6 }
              | identifier assign PExpr                                { Assign $1 $3 }
             --  | identifier dot val assign PExpr                        { DrefAssign $1 $5 }

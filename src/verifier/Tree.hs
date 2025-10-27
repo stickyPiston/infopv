@@ -1,22 +1,25 @@
 module Verifier.Tree where
 
-import GCLParser.GCLDatatype
-
 import Control.Monad.Reader
-import Control.Monad.State
+
+import GCLParser.GCLDatatype
 import Data.Maybe
+import Control.Monad.State
 
 type Typed = Type
 type Untyped = ()
 type Predicate = Expr
 
 -- Environment for tree building
-type Gamma = [(String, Type)]
+data BuildEnv = BuildEnv
+    { gamma :: [(String, Type)]
+    , handler :: Maybe Tree
+    }
 
 data Tree
     = Empty
     | Next (Stmt Typed) Tree
-    | Branch (Expr Typed) Tree Tree
+    | Branch Bool (Expr Typed) Tree Tree
     | TWhile (Expr Typed) Tree Tree
 
 instance Show Tree where
@@ -30,36 +33,81 @@ instance Semigroup Tree where
     t <> Empty = t
     Empty <> t = t
     Next s1 t1 <> t2 = Next s1 (t1 <> t2)
-    Branch g t1 t2 <> t3 = Branch g (t1 <> t3) (t2 <> t3)
+    Branch b g t1 t2 <> t3 = Branch b g (t1 <> t3) (t2 <> t3)
     TWhile g b n <> t = TWhile g b (n <> t)
 
 instance Monoid Tree where
     mempty = Empty
 
-buildTree :: Stmt Untyped -> Reader Gamma Tree
+withHandler :: Tree -> Reader BuildEnv a -> Reader BuildEnv a
+withHandler h = local \s -> s { handler = Just h }
+
+withVariables :: [(String, Type)] -> Reader BuildEnv a -> Reader BuildEnv a
+withVariables g = local \s -> s { gamma = g ++ gamma s }
+
+buildTree :: Stmt Untyped -> Reader BuildEnv Tree
 buildTree = \case
     Seq s1 s2 -> liftM2 (<>) (buildTree s1) (buildTree s2)
-    IfThenElse g t e -> Branch <$> annotatePredicate g <*> buildTree t <*> buildTree e
+    IfThenElse g t e -> Branch False <$> annotatePredicate g <*> buildTree t <*> buildTree e
     While g b -> TWhile <$> annotatePredicate g <*> buildTree b <*> pure Empty
-    Block vars b -> local ([(x, t) | VarDeclaration x t <- vars] ++) $ buildTree b
+    Block vars b -> withVariables [(x, t) | VarDeclaration x t <- vars] $ buildTree b
     Skip -> return $ End Skip
     Assert p -> End . Assert <$> annotatePredicate p
     Assume p -> End . Assume <$> annotatePredicate p
     Assign x e -> End . Assign x <$> annotatePredicate e
     AAssign x () i e -> do
-        arrayTy <- asks $ fromJust . lookup x
+        arrayTy <- asks $ fromJust . lookup x . gamma
         stmt <- AAssign x arrayTy <$> annotatePredicate i <*> annotatePredicate e
         return $ End stmt
+    TryCatch e try catch -> do
+        h <- withVariables [(e, PType PTInt)] $ buildTree catch
+        try' <- buildTree try
+        return $ insertRaises e h try'
 
-annotatePredicate :: Predicate Untyped -> Reader Gamma (Predicate Typed)
+insertRaises :: String -> Tree -> Tree -> Tree
+insertRaises e h = \case
+    Empty -> Empty
+    Next (Assert p) t -> insertOnThrowingCondition p $
+        Next (Assert p) (insertRaises e h t)
+    Next (Assume p) t -> insertOnThrowingCondition p $
+        Next (Assume p) (insertRaises e h t)
+    Next (Assign x p) t -> insertOnThrowingCondition p $
+        Next (Assign x p) (insertRaises e h t)
+    Next (AAssign x ty i p) t -> insertOnThrowingCondition p $
+        Branch True (BinopExpr LessThan i (SizeOf (Var x ty))) (insertRaises e h t) (Next (Assign e (LitI 2)) h)
+    Branch True g l r -> Branch True g l r
+    Branch False g l r -> insertOnThrowingCondition g $
+        Branch False g (insertRaises e h l) (insertRaises e h r)
+    TWhile g b t -> TWhile g (insertRaises e h b) (insertRaises e h t)
+    _ -> error "Invalid tree"
+    where
+        insertOnThrowingCondition p t = case throwingCondition p of
+            [] -> t
+            cs -> foldr (\(code, cond) acc -> Branch True cond (Next (Assign e $ LitI code) h) acc) t cs
+
+throwingCondition :: Expr Typed -> [(Int, Predicate Typed)]
+throwingCondition = \case
+    BinopExpr op x y -> throwingCondition x <> throwingCondition y <> case op of
+        Divide -> [(1, BinopExpr Equal y (LitI 0))]
+        _ -> []
+    ArrayElem a i -> [(2, BinopExpr GreaterThanEqual i (SizeOf a))]
+    Parens e -> throwingCondition e
+    OpNeg e -> throwingCondition e
+    Forall _ e -> throwingCondition e
+    Exists _ e -> throwingCondition e
+    RepBy a i e -> throwingCondition a <> throwingCondition i <> throwingCondition e
+    Cond i t e -> throwingCondition i <> throwingCondition t <> throwingCondition e
+    _ -> []
+
+annotatePredicate :: Predicate Untyped -> Reader BuildEnv (Predicate Typed)
 annotatePredicate = \case
-    Var name _ -> asks (Var name . fromJust . lookup name)
+    Var name _ -> asks (Var name . fromJust . lookup name . gamma)
     Parens inner -> Parens <$> annotatePredicate inner
     ArrayElem arr index -> ArrayElem <$> annotatePredicate arr <*> annotatePredicate index
     OpNeg rand -> OpNeg <$> annotatePredicate rand
     BinopExpr binop l r -> BinopExpr binop <$> annotatePredicate l <*> annotatePredicate r
-    Forall name body -> Forall name <$> local ((name, PType PTInt) :) (annotatePredicate body)
-    Exists name body -> Exists name <$> local ((name, PType PTInt) :) (annotatePredicate body)
+    Forall name body -> Forall name <$> withVariables [(name, PType PTInt)] (annotatePredicate body)
+    Exists name body -> Exists name <$> withVariables [(name, PType PTInt)] (annotatePredicate body)
     Cond cond then_ else_ -> liftM3 Cond
         (annotatePredicate cond)
         (annotatePredicate then_)
@@ -77,7 +125,7 @@ prettyTree = go "" True
         End stmt        -> line pfx isLast ++ show stmt
         Next stmt t     -> line pfx isLast ++ show stmt ++ "\n"
             ++ go (next pfx isLast) True t
-        Branch expr l r -> line pfx isLast ++ "if " ++ show expr ++ "\n"
+        Branch _ expr l r -> line pfx isLast ++ "if " ++ show expr ++ "\n"
             ++ go (next pfx isLast) False l ++ "\n"
             ++ go (next pfx isLast) True r
         TWhile g b t -> line pfx isLast ++ "while " ++ show g ++ "\n"
@@ -100,7 +148,7 @@ toGraphviz tree =
             Empty           -> node "∅\", shape=\"plaintext\"" "gray" n
             End stmt        -> node (show stmt) "green" n
             Next stmt c     -> (\n1 e1 n2 -> n1 ++ e1 ++ n2) <$> node (show stmt) "orange" n <*> edge n <*> go c
-            Branch g l r    -> (\n1 el nl er nr -> concat [n1, el, nl, er, nr])
+            Branch _ g l r    -> (\n1 el nl er nr -> concat [n1, el, nl, er, nr])
                 <$> node ("if "    ++ show g) "red" n <*> edge n <*> go l <*> edge n <*> go r
             TWhile g l r    -> (\n1 el nl er nr -> n1 ++ el ++ nl ++ er ++ nr)
                 <$> node ("while " ++ show g) "red" n <*> edge n <*> go l <*> edge n <*> go r

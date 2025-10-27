@@ -58,7 +58,7 @@ data Stmt ann
     | IfThenElse (Expr ann)             (Stmt ann)   (Stmt ann)     
     | While      (Expr ann)             (Stmt ann)   
     | Block      [VarDeclaration] (Stmt ann)   
-    -- | TryCatch   String           Stmt   Stmt
+    | TryCatch   String           (Stmt ann)   (Stmt ann)
 --    | Call       [String]         [Expr] String
 
 instance Show (Stmt ann) where

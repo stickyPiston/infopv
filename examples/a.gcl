@@ -1,14 +1,16 @@
-A(a : []int, b : int | y : int) {
-    y := -1 ;
-    var i : int {
-        i := 0 ;
-        while i < #a && y = -1 do {
-            if a[i] = b then {
-                y := i
-            } else {
-                i := i + 1
-            }
+A(x : int, y : int, a : []int | z : int) {
+    assume #a > 0 ;
+    assume x = 0 ;
+    try {
+        z := a[0] / x ;
+        a[0] := z ;
+        try {
+            z := x / y
+        } catch (e) {
+            z := 2
         }
+    } catch (e) {
+        z := 1
     } ;
-    assert y = -1 || a[y] = b
+    assert z >= 0
 }

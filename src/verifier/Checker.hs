@@ -229,8 +229,8 @@ verify tree = asks pathLength >>= \case
             repby <- liftM3 RepBy (eval $ Var nm ann) (eval idx) (eval val)
             assign nm repby $ continue t
         Next Skip t -> continue t
-        Branch g l r -> liftM2 (&&) (checkBranch g l) (checkBranch (OpNeg g) r)
-        TWhile g b t -> verify $ Branch g (b <> TWhile g b t) t
+        Branch _ g l r -> liftM2 (&&) (checkBranch g l) (checkBranch (OpNeg g) r)
+        TWhile g b t -> verify $ Branch False g (b <> TWhile g b t) t
         _ -> error "Invalid tree node"
 
 data VerifyConfig = VerifyConfig
@@ -243,7 +243,7 @@ data VerifyConfig = VerifyConfig
 verifyProgram :: VerifyConfig -> Program -> IO (Bool, Stats)
 verifyProgram VerifyConfig{n, ph, p, se} Program{stmt, input, output} = do 
     let initialGamma = [(name, ty) | VarDeclaration name ty <- input ++ output]
-    let compTree = runReader (buildTree stmt) initialGamma
+    let compTree = runReader (buildTree stmt) (BuildEnv initialGamma Nothing)
     when p $ print compTree
     let initialRho = M.fromList [(name, Var (name ++ "_0") ty) | VarDeclaration name ty <- input ++ output]
     g <- initStdGen
