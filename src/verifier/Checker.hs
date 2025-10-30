@@ -22,7 +22,7 @@ import qualified Data.Map as M
 import Data.List (isPrefixOf)
 
 -- Environment for Expr to Z3 AST conversion
-type SymbolEnv = [(String, Z3.Symbol)]
+type SymbolEnv = [(String, Z3.AST)]
 
 repbySpineRoot :: Expr a -> Maybe (Expr a)
 repbySpineRoot (Var x a) = Just (Var x a)
@@ -83,18 +83,19 @@ fromExpr e = do
     where
         buildEnv :: (SymbolEnv, SymbolEnv) -> (String, Type) -> Z3 (SymbolEnv, SymbolEnv)
         buildEnv (varEnv, arrEnv) (name, ty) = do
-            left <- (name,) <$> mkStringSymbol name
+            sort <- fromType ty
+            left <- (name,) <$> (mkStringSymbol name >>= flip mkVar sort)
             (left : varEnv,) <$> case ty of
-                AType _ -> (: arrEnv) . (name,) <$> mkStringSymbol ('#' : name)
+                AType _ -> do
+                    intSort <- mkIntSort
+                    (: arrEnv) . (name,) <$> (mkStringSymbol ('#' : name) >>= flip mkVar intSort)
                 _ -> return arrEnv
 
         -- Take tuple of (variable environment, array size environment) and an expression,
         -- and produce the corresponding Z3 AST.
         go :: (SymbolEnv, SymbolEnv) -> Expr Type -> Z3 Z3.AST
         go env@(varEnv, arrEnv) = \case
-            (Var var ty)             -> do
-                sort <- fromType ty
-                mkVar (fromJust $ lookup var varEnv) sort
+            (Var var _)          -> return $ fromJust $ lookup var varEnv
             (LitI x)              -> mkInt x =<< mkIntSort
             (LitB b)              -> mkBool b
             -- LitNull               -> _
@@ -122,16 +123,18 @@ fromExpr e = do
             -- (NewStore e)          -> _
             (Forall var b)        -> do
                 sym <- mkStringSymbol var
-                z3body <- go ((var, sym) : varEnv, arrEnv) b
                 sort <- mkIntSort
+                arg <- mkBound 0 sort
+                z3body <- go ((var, arg) : varEnv, arrEnv) b
                 mkForall [] [sym] [sort] z3body
             (Exists var b)        -> do
                 sym <- mkStringSymbol var
-                z3body <- go ((var, sym) : varEnv, arrEnv) b
                 sort <- mkIntSort
+                arg <- mkBound 0 sort
+                z3body <- go ((var, arg) : varEnv, arrEnv) b
                 mkExists [] [sym] [sort] z3body
             (SizeOf (RepBy name _ _)) -> go env (SizeOf name)
-            (SizeOf (Var name _)) -> mkVar (fromJust $ lookup name arrEnv) =<< mkIntSort
+            (SizeOf (Var name _)) -> return (fromJust $ lookup name arrEnv)
             (RepBy var i val)     -> join $ mkStore <$> go env var <*> go env i  <*> go env val
             (Cond g e1 e2)        -> join $ mkIte   <$> go env g   <*> go env e1 <*> go env e2
             e' -> error $ "Invalid expression type: " <> show e'

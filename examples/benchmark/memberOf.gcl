@@ -5,7 +5,7 @@
 memberOf(x:int, a:[]int | found:bool) {
    // N is an experiment parameter
    var N : int {
-    N := 10 ;
+    N := 12 ;
     assume #a>=N && #a>=0
             && (exists k:: 0<=k && k<#a && a[k]=x) ;
     var k:int {
