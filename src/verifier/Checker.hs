@@ -15,13 +15,25 @@ import Data.Maybe
 import Data.Functor
 import System.Random
 
-import qualified Data.Map as M
-
 import Z3.Monad as Z3 hiding (local, simplify, eval)
 import qualified Z3.Monad as Z3
+import qualified Data.Map as M
+import Data.List (isPrefixOf)
 
 -- Environment for Expr to Z3 AST conversion
 type SymbolEnv = [(String, Z3.Symbol)]
+
+repbySpineRoot :: Expr a -> Maybe (Expr a)
+repbySpineRoot (Var x a) = Just (Var x a)
+repbySpineRoot (RepBy a _ _) = repbySpineRoot a
+repbySpineRoot _ = Nothing
+
+substRepbySpineRoot :: String -> Expr a -> Expr a -> Maybe (Expr a)
+substRepbySpineRoot name for (Var x _)
+    | x == name = Just for
+    | otherwise = Nothing
+substRepbySpineRoot name for (RepBy a _ _) = substRepbySpineRoot name for a 
+substRepbySpineRoot _ _ _ = Nothing
 
 infixl 3 |->
 (|->) :: String -> Expr a -> Expr a -> Expr a
@@ -44,7 +56,9 @@ infixl 3 |->
         ((x |-> for) cond)
         ((x |-> for) then_)
         ((x |-> for) else_)
-    SizeOf a -> SizeOf $ (x |-> for) a
+    SizeOf a
+        | "#" `isPrefixOf` x -> fromMaybe a $ substRepbySpineRoot (tail x) for a
+        | otherwise -> SizeOf $ (x |-> for) a
     RepBy a i v -> RepBy
         ((x |-> for) a)
         ((x |-> for) i)
@@ -132,6 +146,7 @@ data PruneHeuristic
 
 data SymbolicState = SymbolicState
     { environment     :: M.Map String (Expr Typed)
+    , equalities      :: M.Map String (Expr Typed)
     , constraints     :: [Expr Typed]
     , pathLength      :: Int
     , maxLength       :: Int
@@ -150,8 +165,14 @@ runSE :: SE a -> SymbolicState -> StdGen -> Z3 (a, Stats)
 runSE = evalRWST
 
 assume :: Expr Typed -> SE a -> SE a
-assume (LitB _) = id
-assume p = local (\s -> s { constraints = simplify p : constraints s })
+assume = \case
+    LitB _ -> id
+    BinopExpr Equal (Var x _) b -> local \s -> s { equalities = M.insert x b $ equalities s }
+    p@(BinopExpr Equal (SizeOf a) b) -> case repbySpineRoot a of
+        Just (Var x _) -> local \s -> s { equalities = M.insert ('#' : x) b $ equalities s }
+        _ -> local (\s -> s { constraints = p : constraints s })
+    BinopExpr Equal a b -> assume (BinopExpr Equal b a)
+    p -> local \s -> s { constraints = p : constraints s }
 
 randomRange :: Int -> Int -> SE Int
 randomRange lo hi = do
@@ -172,16 +193,16 @@ failWith s = tell s >> return False
 checkValid :: Expr Typed -> SE Bool
 checkValid (LitB x) = tell (checkedFormula (LitB x)) $> x
 checkValid p = Z3.local do
-    relevantConstraints <- asks (filterIrrelevantConstraints p . constraints) >>= mapM fromExpr' >>= mkAnd
+    cs <- asks constraints >>= mapM fromExpr' >>= mkAnd
     z3Predicate <- fromExpr' p
     tell $ checkedFormula p <> z3Invocation
-    (relevantConstraints `mkImplies` z3Predicate) >>= mkNot >>= assert >> (Unsat ==) <$> check
+    (cs `mkImplies` z3Predicate) >>= mkNot >>= assert >> (Unsat ==) <$> check
 
 prune :: Expr Typed -> SE Z3.Result
 prune p = Z3.local do
-    relevantConstraints <- asks (filterIrrelevantConstraints p . constraints) >>= mapM fromExpr'
+    cs <- asks constraints >>= mapM fromExpr'
     tell $ checkedFormula p <> z3Invocation
-    fromExpr' p >>= mkAnd . (: relevantConstraints) >>= assert >> check
+    fromExpr' p >>= mkAnd . (: cs) >>= assert >> check
 
 checkSatisfiability :: Expr Typed -> SE Z3.Result
 checkSatisfiability (LitB x) = do
@@ -205,8 +226,9 @@ checkBranch g t = do
 
 eval :: Expr Typed -> SE (Expr Typed)
 eval e = asks \s ->
-    let substExpr = foldr (\fv -> fv |-> environment s M.! fv) e [fv | (fv, _) <- freeVariables e]
-     in if simplifyEnabled s then simplify substExpr else substExpr
+    let substExpr = foldl (\acc fv -> fv |-> environment s M.! fv $ acc) e (map fst $ freeVariables e)
+        equalExpr = foldl (\acc (x, for) -> x |-> for $ acc) substExpr (M.toList $ equalities s)
+     in if simplifyEnabled s then simplify equalExpr else equalExpr
 
 continue :: Tree -> SE Bool
 continue t = local (\s -> s { pathLength = pathLength s - 1 }) $ verify t
@@ -219,9 +241,11 @@ verify tree = asks pathLength >>= \case
         Next (Assume p) t -> do
             evaluatedCondition <- eval p
             assume evaluatedCondition $ continue t
-        Next (Assert p) t -> eval p >>= checkValid >>= \case
-            True -> continue t
-            False -> failWith $ violatedAssertion p
+        Next (Assert p) t -> do
+            evaluatedCondition <- eval p
+            checkValid evaluatedCondition >>= \case
+                True -> continue t
+                False -> failWith $ violatedAssertion p
         Next (Assign nm val) t -> do
             val' <- eval val
             assign nm val' $ continue t
@@ -250,6 +274,7 @@ verifyProgram VerifyConfig{n, ph, p, se} Program{stmt, input, output} = do
     evalZ3
         let initialSymbolicState = SymbolicState
                 { environment = initialRho
+                , equalities = mempty
                 , pathLength = n
                 , constraints = []
                 , maxLength = n
