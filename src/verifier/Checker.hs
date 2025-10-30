@@ -14,6 +14,7 @@ import Control.Monad.Reader
 import Data.Maybe
 import Data.Functor
 import System.Random
+import Debug.Trace
 
 import Z3.Monad as Z3 hiding (local, simplify, eval)
 import qualified Z3.Monad as Z3
@@ -164,14 +165,24 @@ instance (Monoid w, MonadZ3 m) => MonadZ3 (RWST r w s m) where
 runSE :: SE a -> SymbolicState -> StdGen -> Z3 (a, Stats)
 runSE = evalRWST
 
+isConcrete :: Expr Typed -> Bool
+isConcrete (LitI _) = True
+isConcrete (LitB _) = True
+isConcrete _ = False
+
 assume :: Expr Typed -> SE a -> SE a
 assume = \case
     LitB _ -> id
-    BinopExpr Equal (Var x _) b -> local \s -> s { equalities = M.insert x b $ equalities s }
-    p@(BinopExpr Equal (SizeOf a) b) -> case repbySpineRoot a of
+
+    BinopExpr Equal (Var x _) b | isConcrete b ->
+        local \s -> s { equalities = M.insert x b $ equalities s }
+
+    p@(BinopExpr Equal (SizeOf a) b) | isConcrete b -> case repbySpineRoot a of
         Just (Var x _) -> local \s -> s { equalities = M.insert ('#' : x) b $ equalities s }
         _ -> local (\s -> s { constraints = p : constraints s })
-    BinopExpr Equal a b -> assume (BinopExpr Equal b a)
+
+    BinopExpr Equal a b | isConcrete a -> assume (BinopExpr Equal b a)
+
     p -> local \s -> s { constraints = p : constraints s }
 
 randomRange :: Int -> Int -> SE Int
