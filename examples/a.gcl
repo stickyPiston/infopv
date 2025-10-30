@@ -1,16 +1,4 @@
 A(x : int, y : int, a : []int | z : int) {
-    assume #a > 0 ;
-    assume x = 0 ;
-    try {
-        z := a[0] / x ;
-        a[0] := z ;
-        try {
-            z := x / y
-        } catch (e) {
-            z := 2
-        }
-    } catch (e) {
-        z := 1
-    } ;
-    assert z >= 0
+    assert exists m :: m = 5
+    // ~(exists m :: m = 5) = forall m :: ~(m = 5)
 }

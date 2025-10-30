@@ -2,12 +2,6 @@ module Verifier.Simplifier where
 
 import GCLParser.GCLDatatype
 import Data.Maybe (fromMaybe)
-import ExamplesOfSemanticFunction (freeVariables)
-
-filterIrrelevantConstraints :: Expr Type -> [Expr Type] -> [Expr Type]
-filterIrrelevantConstraints for constraints =
-    let fvFor = freeVariables for
-     in filter (any (`elem` fvFor) . freeVariables) constraints
 
 simplify :: Eq a => Expr a -> Expr a
 simplify = \case
