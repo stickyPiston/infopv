@@ -84,7 +84,7 @@ throwingCondition = \case
     BinopExpr op x y -> throwingCondition x <> throwingCondition y <> case op of
         Divide -> [(1, BinopExpr Equal y (LitI 0))]
         _ -> []
-    ArrayElem a i -> [(2, BinopExpr GreaterThanEqual i (SizeOf a))]
+    ArrayElem a i -> [(2, BinopExpr Or (BinopExpr GreaterThanEqual i (SizeOf a)) (BinopExpr LessThan i (LitI 0)))]
     Parens e -> throwingCondition e
     OpNeg e -> throwingCondition e
     Forall _ e -> throwingCondition e

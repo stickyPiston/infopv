@@ -14,7 +14,6 @@ import Control.Monad.Reader
 import Data.Maybe
 import Data.Functor
 import System.Random
-import Debug.Trace
 
 import Z3.Monad as Z3 hiding (local, simplify, eval)
 import qualified Z3.Monad as Z3
