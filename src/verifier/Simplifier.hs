@@ -6,17 +6,19 @@ import Data.Maybe (fromMaybe)
 simplify :: Eq a => Expr a -> Expr a
 simplify = \case
     BinopExpr op l r -> case (simplify l, simplify r) of
+        (a, b) | op == Equal && a==b -> LitB True 
+               | op == Equal -> BinopExpr op a b
         (LitI a, LitI b) -> evalIntOp op a b
         (LitB a, b) -> case op of
             And -> if a then b else LitB a
             Or -> if a then LitB a else b
             Implication -> if a then b else LitB True
-            _ -> error "Boolean argument passed to non-boolean operator"
+            x -> error $ "Boolean argument passed to non-boolean operator: " ++ show a ++ show x ++ show b
         (a, LitB b) -> case op of
             And -> if b then a else LitB b
             Or -> if b then LitB b else a
             Implication -> if b then LitB b else OpNeg a
-            _ -> error "Boolean argument passed to non-boolean operator"
+            x -> error $ "Boolean argument passed to non-boolean operator: " ++ show a ++ show x ++ show b
         (cfL, cfR) -> BinopExpr op cfL cfR
     OpNeg x -> case simplify x of
         LitB b -> LitB $ not b
