@@ -18,12 +18,11 @@ main :: IO ()
 main =
     completenessBench
     --heuristicBench
-    
 
 -- Benchmark all variants of a benchmark program with N in [2..10], assuming the files exist in the benchmark dir
 completenessBench :: IO ()
 completenessBench = do
-    let bm = "invalidDivBy"
+    let bm = "invalidFind12"
         nums = map show [2..10]
         defaultConfig = VerifyConfig{n=50, ph=None, p=False, se=True}
 
