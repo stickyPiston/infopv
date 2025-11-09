@@ -16,8 +16,8 @@ allOptions = [minBound..maxBound]
 
 main :: IO ()
 main =
-    completenessBench
-    --heuristicBench
+    --completenessBench
+    heuristicBench
 
 -- Benchmark all variants of a benchmark program with N in [2..10], assuming the files exist in the benchmark dir
 completenessBench :: IO ()
@@ -33,12 +33,17 @@ completenessBench = do
 -- Benchmark all 6 combinations of (no-)simplify and prune heuristic on multiple benchmarking progams
 heuristicBench :: IO ()
 heuristicBench = do
-    let benchmarks = ["benchmark/invalidBsort"] 
-        defaultConfig = VerifyConfig{n=40, ph=None, p=False, se=False}
+    let benchmarks = ["divByN", "memberOf", "pullUp"]
+        --benchmarks = ["find12"] 
+        defaultConfig = VerifyConfig{n=10, ph=None, p=False, se=False}
+        depths = [10, 25, 50]
         
-    progs <- forM benchmarks \file -> (file,) <$> fmap fromRight (parseGCLfile $ "examples/" ++ file ++ ".gcl")
+    progs <- forM benchmarks \file -> (file,) <$> fmap fromRight (parseGCLfile $ "examples/benchmark/" ++ file ++ ".gcl")
 
     defaultMain $
-        for [(p, s) | p <- progs, s <- allOptions] \((file, p), se) -> bgroup (file ++ ", simplify: " ++ show se) $ 
+        for [(p, d, s) | p <- progs, d <- depths, s <- allOptions] \((file, p), d, se) -> bgroup (file ++ ", depth: " ++ show d ++ ", simplify: " ++ show se) $ 
             for allOptions \ph -> bench ("prune heuristic: " ++ show ph) $ 
-                nfIO (verifyProgram defaultConfig{se=se, ph=ph} p)
+                nfIO (verifyProgram defaultConfig{n=d, se=se, ph=ph} p)
+            
+            -- To run the benchmark for find12 with only Full pruning
+            --[bench "prune heuristic: Full" $ nfIO (verifyProgram defaultConfig{n=d, se=se, ph=Full} p)]

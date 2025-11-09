@@ -13,38 +13,41 @@
 
 
 find12(a:[]int | z:int) {
-   // N is an experiment parameter
-   assume #a>0 && #a=N
+  // N is an experiment parameter
+  var N : int {
+    N := 10 ;
+    assume #a>0 && #a=N
           && (forall i:: 0<=i && i<#a ==> a[i]>0)
           && (forall i:: 0<=i && i<N  ==> a[i]=1) ;
 
-   var k:int, r:int {
-     k := 0 ;
-     z := -1 ;
-     while k<#a && (z<0 || (z=1)) do {
-       z := -1 ;
-       try {
+    var k:int, r:int {
+    k := 0 ;
+    z := -1 ;
+    while k<#a && (z<0 || (z=1)) do {
+        z := -1 ;
+        try {
           r := a[k] + a[k+1]
-       }
-       catch(e) {
+        }
+        catch(e) {
           if e=2 // array-range-exception
-             then { z := 1 }
-             else { skip   }
-       } ;
-       try {
+              then { z := 1 }
+              else { skip   }
+        } ;
+        try {
           r := 2/r // idea: can we first check if r=0 is feasible?
-       }
-       catch(e) {
+        }
+        catch(e) {
           if e=1 // division by zero
-            then { z := 0 }
-            else { skip   }
-       } ;
-       if z<0 && r < 1
-            then { z := 2 }
-            else { z := 1 } ;
+              then { z := 0 }
+              else { skip   }
+        } ;
+        if z<0 && r < 1
+              then { z := 2 }
+              else { z := 1 } ;
 
-       k := k+1
-     }
-   } ;
-   assert z>0
+        k := k+1
+      }
+    } ;
+    assert z>0
+  }
 }

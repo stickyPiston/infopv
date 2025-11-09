@@ -7,7 +7,7 @@
 pullUp(step : int, a : []int | b : []int) {
   // N is an experiment parameter
   var N : int {
-    N := 12 ;
+    N := 10 ;
     assume #a = N ;
     assert #a > 2 ;
     assume step > 0 ;
