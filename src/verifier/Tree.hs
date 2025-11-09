@@ -20,8 +20,8 @@ data Tree
     | TWhile (Expr Typed) Tree Tree
 
 instance Show Tree where
-    -- show = prettyTree
-    show = toGraphviz
+    show = prettyTree
+    --show = toGraphviz
 
 pattern End :: Stmt Typed -> Tree
 pattern End s = Next s Empty
